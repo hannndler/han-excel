@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Han Excel Builder - Navegador</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2563EB;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            background-color: #f9fafb;
+        }
+        .test-section h3 {
+            color: #374151;
+            margin-top: 0;
+        }
+        button {
+            background-color: #2563EB;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #1d4ed8;
+        }
+        button:disabled {
+            background-color: #9ca3af;
+            cursor: not-allowed;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .status.success {
+            background-color: #d1fae5;
+            color: #065f46;
+            border: 1px solid #10b981;
+        }
+        .status.error {
+            background-color: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #ef4444;
+        }
+        .status.info {
+            background-color: #dbeafe;
+            color: #1e40af;
+            border: 1px solid #3b82f6;
+        }
+        .log {
+            background-color: #1f2937;
+            color: #f9fafb;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 300px;
+            overflow-y: auto;
+            margin: 10px 0;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .stat-card {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #e5e7eb;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2563EB;
+        }
+        .stat-label {
+            color: #6b7280;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Test Han Excel Builder - Navegador</h1>
+        
+        <div class="test-section">
+            <h3>📊 Test Básico</h3>
+            <p>Genera un reporte Excel simple con datos de prueba.</p>
+            <button onclick="runBasicTest()" id="basicBtn">Ejecutar Test Básico</button>
+            <div id="basicStatus"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>📈 Test Completo</h3>
+            <p>Genera un reporte Excel completo con múltiples hojas y estilos.</p>
+            <button onclick="runCompleteTest()" id="completeBtn">Ejecutar Test Completo</button>
+            <div id="completeStatus"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>📋 Estadísticas</h3>
+            <div id="stats" class="stats"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>📝 Log de Actividad</h3>
+            <div id="log" class="log"></div>
+            <button onclick="clearLog()">Limpiar Log</button>
+        </div>
+    </div>
+
+    <script type="module">
+        // Importar desde el CDN o desde el build local
+        // En producción, esto vendría de npm
+        import { ExcelBuilder, CellType, NumberFormat, StyleBuilder } from './dist/han-excel.es.js';
+
+        let currentStats = {};
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `[${timestamp}] ${message}`;
+            logEntry.style.color = type === 'error' ? '#ef4444' : type === 'success' ? '#10b981' : '#3b82f6';
+            logDiv.appendChild(logEntry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateStatus(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="status ${type}">${message}</div>`;
+        }
+
+        function updateStats(stats) {
+            currentStats = stats;
+            const statsDiv = document.getElementById('stats');
+            statsDiv.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-value">${stats.worksheets || 0}</div>
+                    <div class="stat-label">Hojas</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${stats.cells || 0}</div>
+                    <div class="stat-label">Celdas</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${stats.memoryUsage ? (stats.memoryUsage / 1024).toFixed(1) + ' KB' : '0 KB'}</div>
+                    <div class="stat-label">Memoria</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${stats.buildTime || 0}ms</div>
+                    <div class="stat-label">Tiempo</div>
+                </div>
+            `;
+        }
+
+        async function runBasicTest() {
+            const btn = document.getElementById('basicBtn');
+            btn.disabled = true;
+            
+            try {
+                log('🧪 Iniciando test básico...');
+                updateStatus('basicStatus', 'Ejecutando test básico...', 'info');
+
+                // Crear builder
+                log('📝 Creando ExcelBuilder...');
+                const builder = new ExcelBuilder({
+                    metadata: {
+                        title: 'Test Básico - Navegador',
+                        author: 'Test User',
+                        description: 'Test básico en navegador'
+                    }
+                });
+
+                // Agregar worksheet
+                log('📊 Agregando worksheet...');
+                const worksheet = builder.addWorksheet('Datos Básicos');
+
+                // Agregar header
+                log('📋 Agregando header...');
+                worksheet.addHeader({
+                    key: 'title',
+                    value: 'Test Básico - Han Excel Builder',
+                    type: CellType.STRING,
+                    mergeCell: true,
+                    styles: StyleBuilder.create()
+                        .fontBold()
+                        .fontSize(16)
+                        .centerAlign()
+                        .backgroundColor('#2563EB')
+                        .fontColor('#FFFFFF')
+                        .build()
+                });
+
+                // Agregar sub-headers
+                log('📋 Agregando sub-headers...');
+                worksheet.addSubHeaders([
+                    {
+                        key: 'name',
+                        value: 'Nombre',
+                        type: CellType.STRING,
+                        styles: StyleBuilder.create().fontBold().backgroundColor('#F3F4F6').build()
+                    },
+                    {
+                        key: 'value',
+                        value: 'Valor',
+                        type: CellType.NUMBER,
+                        styles: StyleBuilder.create().fontBold().backgroundColor('#F3F4F6').build()
+                    }
+                ]);
+
+                // Agregar datos
+                log('📊 Agregando datos...');
+                const testData = [
+                    { name: 'Item A', value: 100 },
+                    { name: 'Item B', value: 200 },
+                    { name: 'Item C', value: 300 }
+                ];
+
+                testData.forEach((row, index) => {
+                    worksheet.addRow([
+                        { key: `name-${index}`, value: row.name, type: CellType.STRING, header: 'Nombre' },
+                        { key: `value-${index}`, value: row.value, type: CellType.NUMBER, header: 'Valor' }
+                    ]);
+                });
+
+                // Validar
+                log('✅ Validando workbook...');
+                const validation = builder.validate();
+                if (!validation.success) {
+                    throw new Error(`Validación falló: ${validation.error?.message}`);
+                }
+
+                // Obtener estadísticas
+                const stats = builder.getStats();
+                updateStats(stats);
+                log(`📈 Estadísticas: ${stats.totalWorksheets} hojas, ${stats.totalCells} celdas`);
+
+                // Generar y descargar
+                log('🔨 Generando archivo...');
+                const result = await builder.generateAndDownload('test-basico-navegador.xlsx');
+                
+                if (result.success) {
+                    log('✅ Archivo descargado exitosamente!', 'success');
+                    updateStatus('basicStatus', '✅ Test básico completado exitosamente', 'success');
+                } else {
+                    throw new Error(`Error al descargar: ${result.error?.message}`);
+                }
+
+            } catch (error) {
+                log(`❌ Error en test básico: ${error.message}`, 'error');
+                updateStatus('basicStatus', `❌ Error: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function runCompleteTest() {
+            const btn = document.getElementById('completeBtn');
+            btn.disabled = true;
+            
+            try {
+                log('🧪 Iniciando test completo...');
+                updateStatus('completeStatus', 'Ejecutando test completo...', 'info');
+
+                // Crear builder
+                log('📝 Creando ExcelBuilder...');
+                const builder = new ExcelBuilder({
+                    metadata: {
+                        title: 'Test Completo - Navegador',
+                        author: 'Test User',
+                        description: 'Test completo en navegador',
+                        keywords: 'test, excel, browser',
+                        category: 'Test Reports'
+                    }
+                });
+
+                // Worksheet principal
+                log('📊 Agregando worksheet principal...');
+                const worksheet = builder.addWorksheet('Ventas');
+
+                // Header principal
+                worksheet.addHeader({
+                    key: 'main-title',
+                    value: 'Reporte de Ventas - Test Completo',
+                    type: CellType.STRING,
+                    mergeCell: true,
+                    styles: StyleBuilder.create()
+                        .fontBold()
+                        .fontSize(18)
+                        .centerAlign()
+                        .backgroundColor('#2563EB')
+                        .fontColor('#FFFFFF')
+                        .build()
+                });
+
+                // Sub-headers
+                worksheet.addSubHeaders([
+                    {
+                        key: 'product',
+                        value: 'Producto',
+                        type: CellType.STRING,
+                        styles: StyleBuilder.create().fontBold().backgroundColor('#4472C4').fontColor('#FFFFFF').centerAlign().build()
+                    },
+                    {
+                        key: 'sales',
+                        value: 'Ventas',
+                        type: CellType.NUMBER,
+                        styles: StyleBuilder.create().fontBold().backgroundColor('#4472C4').fontColor('#FFFFFF').centerAlign().build()
+                    },
+                    {
+                        key: 'revenue',
+                        value: 'Ingresos',
+                        type: CellType.NUMBER,
+                        styles: StyleBuilder.create().fontBold().backgroundColor('#4472C4').fontColor('#FFFFFF').centerAlign().build()
+                    }
+                ]);
+
+                // Datos
+                const salesData = [
+                    { product: 'Laptop', sales: 25, revenue: 37500 },
+                    { product: 'Mouse', sales: 150, revenue: 7500 },
+                    { product: 'Teclado', sales: 80, revenue: 16000 },
+                    { product: 'Monitor', sales: 12, revenue: 18000 }
+                ];
+
+                salesData.forEach((row, index) => {
+                    worksheet.addRow([
+                        { 
+                            key: `product-${index}`, 
+                            value: row.product, 
+                            type: CellType.STRING, 
+                            header: 'Producto',
+                            styles: StyleBuilder.create()
+                                .backgroundColor(index % 2 === 0 ? '#F2F2F2' : '#FFFFFF')
+                                .build()
+                        },
+                        { 
+                            key: `sales-${index}`, 
+                            value: row.sales, 
+                            type: CellType.NUMBER, 
+                            header: 'Ventas',
+                            styles: StyleBuilder.create()
+                                .backgroundColor(index % 2 === 0 ? '#F2F2F2' : '#FFFFFF')
+                                .centerAlign()
+                                .build()
+                        },
+                        { 
+                            key: `revenue-${index}`, 
+                            value: row.revenue, 
+                            type: CellType.NUMBER, 
+                            header: 'Ingresos',
+                            styles: StyleBuilder.create()
+                                .backgroundColor(index % 2 === 0 ? '#F2F2F2' : '#FFFFFF')
+                                .numberFormat('#,##0')
+                                .build()
+                        }
+                    ]);
+                });
+
+                // Worksheet de resumen
+                log('📊 Agregando worksheet de resumen...');
+                const summaryWorksheet = builder.addWorksheet('Resumen');
+
+                summaryWorksheet.addHeader({
+                    key: 'summary-title',
+                    value: 'Resumen de Ventas',
+                    type: CellType.STRING,
+                    mergeCell: true,
+                    styles: StyleBuilder.create()
+                        .fontBold()
+                        .fontSize(16)
+                        .centerAlign()
+                        .backgroundColor('#059669')
+                        .fontColor('#FFFFFF')
+                        .build()
+                });
+
+                // Validar
+                log('✅ Validando workbook...');
+                const validation = builder.validate();
+                if (!validation.success) {
+                    throw new Error(`Validación falló: ${validation.error?.message}`);
+                }
+
+                // Estadísticas
+                const stats = builder.getStats();
+                updateStats(stats);
+                log(`📈 Estadísticas completas: ${stats.totalWorksheets} hojas, ${stats.totalCells} celdas, ${(stats.memoryUsage / 1024).toFixed(1)} KB`);
+
+                // Generar y descargar
+                log('🔨 Generando archivo completo...');
+                const result = await builder.generateAndDownload('test-completo-navegador.xlsx');
+                
+                if (result.success) {
+                    log('✅ Archivo completo descargado exitosamente!', 'success');
+                    updateStatus('completeStatus', '✅ Test completo completado exitosamente', 'success');
+                } else {
+                    throw new Error(`Error al descargar: ${result.error?.message}`);
+                }
+
+            } catch (error) {
+                log(`❌ Error en test completo: ${error.message}`, 'error');
+                updateStatus('completeStatus', `❌ Error: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        // Hacer las funciones disponibles globalmente
+        window.runBasicTest = runBasicTest;
+        window.runCompleteTest = runCompleteTest;
+        window.clearLog = clearLog;
+
+        // Log inicial
+        log('🚀 Han Excel Builder cargado correctamente', 'success');
+        log('💡 Haz clic en los botones para ejecutar los tests');
+    </script>
+</body>
+</html> 
