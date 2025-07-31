@@ -1366,6 +1366,7 @@ export declare type Result<T = unknown> = ISuccessResult<T> | IErrorResult;
  */
 export declare class StyleBuilder implements IStyleBuilder {
     private style;
+    constructor();
     /**
      * Create a new StyleBuilder instance
      */
@@ -1502,7 +1503,7 @@ export declare enum VerticalAlignment {
 /**
  * Worksheet - Representa una hoja de cálculo dentro del builder
  *
- * Soporta headers, subheaders, rows, footers, children y estilos por celda.
+ 2 * Soporta headers, subheaders anidados, rows, footers, children y estilos por celda.
  */
 export declare class Worksheet implements IWorksheet {
     config: IWorksheetConfig;
@@ -1521,7 +1522,7 @@ export declare class Worksheet implements IWorksheet {
      */
     addHeader(header: IHeaderCell): this;
     /**
-     * Agrega subheaders
+     * Agrega subheaders (ahora soporta anidación)
      */
     addSubHeaders(subHeaders: IHeaderCell[]): this;
     /**
@@ -1537,9 +1538,54 @@ export declare class Worksheet implements IWorksheet {
      */
     build(workbook: default_2.Workbook, _options?: IBuildOptions): Promise<void>;
     /**
+     * Construye headers anidados recursivamente
+     * @param ws - Worksheet de ExcelJS
+     * @param startRow - Fila inicial
+     * @param headers - Array de headers a procesar
+     * @returns La siguiente fila disponible
+     */
+    private buildNestedHeaders;
+    /**
+     * Obtiene información del header en una profundidad específica
+     */
+    private getHeaderAtDepth;
+    /**
+     * Aplica todos los merges (horizontales y verticales) después de crear todas las filas
+     */
+    private applyAllMerges;
+    /**
+     * Aplica merges inteligentes basados en la estructura de headers
+     */
+    private applySmartMerges;
+    /**
+     * Aplica merges inteligentes para un header específico
+     */
+    private applySmartMergesForHeader;
+    /**
+     * Calcula el span de columnas para un header
+     */
+    private calculateHeaderColSpan;
+    /**
+     * Obtiene la profundidad máxima de headers anidados
+     */
+    private getMaxHeaderDepth;
+    /**
+     * Obtiene el número máximo de columnas
+     */
+    private getMaxColumns;
+    /**
      * Valida la hoja
      */
     validate(): Result<boolean>;
+    /**
+     * Calcula las posiciones de columnas para los datos basándose en la estructura de subheaders
+     */
+    private calculateDataColumnPositions;
+    /**
+     * Agrega una fila de footer
+     * @returns el siguiente rowPointer disponible
+     */
+    private addFooterRow;
     /**
      * Agrega una fila de datos y sus children recursivamente
      * @returns el siguiente rowPointer disponible

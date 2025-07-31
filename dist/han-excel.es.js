@@ -249,7 +249,7 @@ class Worksheet {
     return this;
   }
   /**
-   * Agrega subheaders
+   * Agrega subheaders (ahora soporta anidación)
    */
   addSubHeaders(subHeaders) {
     this.subHeaders.push(...subHeaders);
@@ -293,7 +293,7 @@ class Worksheet {
       this.headers.forEach((header) => {
         ws.addRow([header.value]);
         if (header.mergeCell) {
-          ws.mergeCells(rowPointer, 1, rowPointer, this.subHeaders.length || 1);
+          ws.mergeCells(rowPointer, 1, rowPointer, this.getMaxColumns() || 1);
         }
         if (header.styles) {
           ws.getRow(rowPointer).eachCell((cell) => {
@@ -304,33 +304,168 @@ class Worksheet {
       });
     }
     if (this.subHeaders.length > 0) {
-      const subHeaderValues = this.subHeaders.map((sh) => sh.value);
-      ws.addRow(subHeaderValues);
-      this.subHeaders.forEach((sh, idx) => {
-        if (sh.styles) {
-          ws.getRow(rowPointer).getCell(idx + 1).style = this.convertStyle(sh.styles);
-        }
-      });
-      rowPointer++;
+      rowPointer = this.buildNestedHeaders(ws, rowPointer, this.subHeaders);
     }
     for (const row of this.body) {
       rowPointer = this.addDataRowRecursive(ws, rowPointer, row);
     }
     if (this.footers.length > 0) {
       for (const footer of this.footers) {
-        ws.addRow([footer.value]);
-        if (footer.mergeCell && footer.mergeTo) {
-          ws.mergeCells(rowPointer, 1, rowPointer, footer.mergeTo);
-        }
-        if (footer.styles) {
-          ws.getRow(rowPointer).eachCell((cell) => {
-            cell.style = this.convertStyle(footer.styles);
-          });
-        }
-        rowPointer++;
+        rowPointer = this.addFooterRow(ws, rowPointer, footer);
       }
     }
     this.isBuilt = true;
+  }
+  /**
+   * Construye headers anidados recursivamente
+   * @param ws - Worksheet de ExcelJS
+   * @param startRow - Fila inicial
+   * @param headers - Array de headers a procesar
+   * @returns La siguiente fila disponible
+   */
+  buildNestedHeaders(ws, startRow, headers) {
+    let currentRow = startRow;
+    const maxDepth = this.getMaxHeaderDepth(headers);
+    for (let depth = 0; depth < maxDepth; depth++) {
+      const row = ws.getRow(currentRow);
+      let colIndex = 1;
+      for (const header of headers) {
+        if (depth === 0) {
+          const headerInfo = this.getHeaderAtDepth(header, depth, colIndex);
+          const cell = row.getCell(colIndex);
+          cell.value = headerInfo.value;
+          if (headerInfo.style) {
+            cell.style = this.convertStyle(headerInfo.style);
+          }
+          colIndex += headerInfo.colSpan;
+        } else {
+          if (header.children && header.children.length > 0) {
+            for (const child of header.children) {
+              const cell = row.getCell(colIndex);
+              cell.value = typeof child.value === "string" ? child.value : String(child.value || "");
+              if (child.styles || header.styles) {
+                cell.style = this.convertStyle(child.styles || header.styles);
+              }
+              colIndex += this.calculateHeaderColSpan(child);
+            }
+          } else {
+            const cell = row.getCell(colIndex);
+            cell.value = null;
+            colIndex += 1;
+          }
+        }
+      }
+      currentRow++;
+    }
+    this.applyAllMerges(ws, startRow, currentRow - 1, headers);
+    return currentRow;
+  }
+  /**
+   * Obtiene información del header en una profundidad específica
+   */
+  getHeaderAtDepth(header, depth, startCol) {
+    const colSpan = this.calculateHeaderColSpan(header);
+    if (depth === 0) {
+      console.log(" paso dios mio header", header.value);
+      const mergeRange = colSpan > 1 ? { start: startCol, end: startCol + colSpan - 1 } : null;
+      return {
+        value: typeof header.value === "string" ? header.value : String(header.value || ""),
+        style: header.styles,
+        colSpan,
+        mergeRange
+      };
+    } else if (header.children && header.children.length > 0) {
+      const child = header.children[depth];
+      if (child) {
+        const childColSpan = this.calculateHeaderColSpan(child);
+        const mergeRange = childColSpan > 1 ? { start: startCol, end: startCol + childColSpan - 1 } : null;
+        return {
+          value: typeof child.value === "string" ? child.value : String(child.value || ""),
+          style: child.styles || header.styles,
+          colSpan: childColSpan,
+          mergeRange
+        };
+      }
+    }
+    return {
+      value: null,
+      style: null,
+      colSpan: 1
+    };
+  }
+  /**
+   * Aplica todos los merges (horizontales y verticales) después de crear todas las filas
+   */
+  applyAllMerges(ws, startRow, endRow, headers) {
+    const maxDepth = this.getMaxHeaderDepth(headers);
+    if (maxDepth <= 1)
+      return;
+    this.applySmartMerges(ws, startRow, endRow, headers);
+  }
+  /**
+   * Aplica merges inteligentes basados en la estructura de headers
+   */
+  applySmartMerges(ws, startRow, endRow, headers) {
+    const maxDepth = this.getMaxHeaderDepth(headers);
+    if (maxDepth <= 1)
+      return;
+    let colIndex = 1;
+    for (const header of headers) {
+      this.applySmartMergesForHeader(ws, startRow, endRow, header, colIndex);
+      colIndex += this.calculateHeaderColSpan(header);
+    }
+  }
+  /**
+   * Aplica merges inteligentes para un header específico
+   */
+  applySmartMergesForHeader(ws, startRow, endRow, header, startCol) {
+    const headerColSpan = this.calculateHeaderColSpan(header);
+    if (!header.children || header.children.length === 0) {
+      ws.mergeCells(startRow, startCol, endRow, startCol + headerColSpan - 1);
+    } else {
+      if (headerColSpan > 1) {
+        ws.mergeCells(startRow, startCol, startRow, startCol + headerColSpan - 1);
+      }
+      let childColIndex = startCol;
+      for (const child of header.children) {
+        this.applySmartMergesForHeader(ws, startRow + 1, endRow, child, childColIndex);
+        childColIndex += this.calculateHeaderColSpan(child);
+      }
+    }
+  }
+  /**
+   * Calcula el span de columnas para un header
+   */
+  calculateHeaderColSpan(header) {
+    if (!header.children || header.children.length === 0) {
+      return 1;
+    }
+    return header.children.reduce((total, child) => {
+      return total + this.calculateHeaderColSpan(child);
+    }, 0);
+  }
+  /**
+   * Obtiene la profundidad máxima de headers anidados
+   */
+  getMaxHeaderDepth(headers) {
+    let maxDepth = 1;
+    for (const header of headers) {
+      if (header.children && header.children.length > 0) {
+        const childDepth = this.getMaxHeaderDepth(header.children);
+        maxDepth = Math.max(maxDepth, childDepth + 1);
+      }
+    }
+    return maxDepth;
+  }
+  /**
+   * Obtiene el número máximo de columnas
+   */
+  getMaxColumns() {
+    let maxCols = 0;
+    for (const header of this.subHeaders) {
+      maxCols += this.calculateHeaderColSpan(header);
+    }
+    return maxCols;
   }
   /**
    * Valida la hoja
@@ -348,30 +483,139 @@ class Worksheet {
     return { success: true, data: true };
   }
   /**
+   * Calcula las posiciones de columnas para los datos basándose en la estructura de subheaders
+   */
+  calculateDataColumnPositions() {
+    const positions = {};
+    let currentCol = 1;
+    for (const header of this.subHeaders) {
+      if (header.children && header.children.length > 0) {
+        for (const child of header.children) {
+          if (child.key) {
+            positions[child.key] = currentCol;
+          }
+          if (child.value) {
+            positions[String(child.value)] = currentCol;
+          }
+          currentCol++;
+        }
+      } else {
+        if (header.key) {
+          positions[header.key] = currentCol;
+        }
+        if (header.value) {
+          positions[String(header.value)] = currentCol;
+        }
+        currentCol++;
+      }
+    }
+    return positions;
+  }
+  /**
+   * Agrega una fila de footer
+   * @returns el siguiente rowPointer disponible
+   */
+  addFooterRow(ws, rowPointer, footer) {
+    const columnPositions = this.calculateDataColumnPositions();
+    let footerColPosition;
+    if (footer.key && columnPositions[footer.key]) {
+      footerColPosition = columnPositions[footer.key];
+    } else if (footer.header && columnPositions[footer.header]) {
+      footerColPosition = columnPositions[footer.header];
+    }
+    if (footerColPosition === void 0) {
+      footerColPosition = 1;
+    }
+    const excelRow = ws.getRow(rowPointer);
+    const footerCell = excelRow.getCell(footerColPosition);
+    footerCell.value = footer.value;
+    if (footer.styles) {
+      footerCell.style = this.convertStyle(footer.styles);
+    }
+    if (footer.numberFormat) {
+      footerCell.numFmt = footer.numberFormat;
+    }
+    if (footer.mergeCell && footer.mergeTo) {
+      ws.mergeCells(rowPointer, footerColPosition, rowPointer, footer.mergeTo);
+    }
+    if (footer.children && footer.children.length > 0) {
+      for (const child of footer.children) {
+        if (child) {
+          let colPosition;
+          if (child.key && columnPositions[child.key]) {
+            colPosition = columnPositions[child.key];
+          } else if (child.header && columnPositions[child.header]) {
+            colPosition = columnPositions[child.header];
+          }
+          if (colPosition !== void 0) {
+            const childCell = excelRow.getCell(colPosition);
+            childCell.value = child.value;
+            if (child.styles) {
+              childCell.style = this.convertStyle(child.styles);
+            }
+            if (child.numberFormat) {
+              childCell.numFmt = child.numberFormat;
+            }
+          }
+        }
+      }
+    }
+    if (footer.jump) {
+      return rowPointer + 1;
+    }
+    return rowPointer;
+  }
+  /**
    * Agrega una fila de datos y sus children recursivamente
    * @returns el siguiente rowPointer disponible
    */
-  addDataRowRecursive(ws, rowPointer, row, colPointer = 1) {
+  addDataRowRecursive(ws, rowPointer, row) {
+    const columnPositions = this.calculateDataColumnPositions();
+    console.log("columnPositions", columnPositions);
+    let mainColPosition;
+    if (row.key && columnPositions[row.key]) {
+      mainColPosition = columnPositions[row.key];
+    } else if (row.header && columnPositions[row.header]) {
+      mainColPosition = columnPositions[row.header];
+    }
+    if (mainColPosition === void 0) {
+      mainColPosition = 1;
+    }
     const excelRow = ws.getRow(rowPointer);
-    const cell = excelRow.getCell(colPointer);
-    cell.value = row.value;
+    const mainCell = excelRow.getCell(mainColPosition);
+    mainCell.value = row.value;
     if (row.styles) {
-      cell.style = this.convertStyle(row.styles);
+      mainCell.style = this.convertStyle(row.styles);
     }
     if (row.numberFormat) {
-      cell.numFmt = row.numberFormat;
+      mainCell.numFmt = row.numberFormat;
     }
-    let maxRowPointer = rowPointer;
     if (row.children && row.children.length > 0) {
-      let childRowPointer = rowPointer;
       for (const child of row.children) {
-        childRowPointer++;
-        const usedRow = this.addDataRowRecursive(ws, childRowPointer, child, colPointer + 1);
-        if (usedRow > maxRowPointer)
-          maxRowPointer = usedRow;
+        if (child) {
+          let colPosition;
+          if (child.key && columnPositions[child.key]) {
+            colPosition = columnPositions[child.key];
+          } else if (child.header && columnPositions[child.header]) {
+            colPosition = columnPositions[child.header];
+          }
+          if (colPosition !== void 0) {
+            const childCell = excelRow.getCell(colPosition);
+            childCell.value = child.value;
+            if (child.styles) {
+              childCell.style = this.convertStyle(child.styles);
+            }
+            if (child.numberFormat) {
+              childCell.numFmt = child.numberFormat;
+            }
+          }
+        }
       }
     }
-    return maxRowPointer;
+    if (row.jump) {
+      return rowPointer + 1;
+    }
+    return rowPointer;
   }
   /**
    * Convierte el estilo personalizado a formato compatible con ExcelJS
@@ -394,8 +638,8 @@ class Worksheet {
       converted.fill = {
         type: style.fill.type,
         pattern: style.fill.pattern,
-        fgColor: style.fill.fgColor,
-        bgColor: style.fill.bgColor
+        fgColor: style.fill.foregroundColor,
+        bgColor: style.fill.backgroundColor
       };
     }
     if (style.border) {
@@ -711,6 +955,14 @@ class ExcelBuilder {
 }
 class StyleBuilder {
   style = {};
+  constructor() {
+    this.style.alignment = {
+      horizontal: HorizontalAlignment.CENTER,
+      vertical: VerticalAlignment.MIDDLE,
+      wrapText: true,
+      shrinkToFit: true
+    };
+  }
   /**
    * Create a new StyleBuilder instance
    */
@@ -967,6 +1219,11 @@ class StyleBuilder {
    */
   reset() {
     this.style = {};
+    this.style.alignment = {
+      horizontal: HorizontalAlignment.CENTER,
+      vertical: VerticalAlignment.MIDDLE,
+      wrapText: true
+    };
     return this;
   }
   /**

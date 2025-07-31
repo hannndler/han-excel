@@ -22,6 +22,16 @@ import {
 export class StyleBuilder implements IStyleBuilderInterface {
   private style: Partial<IStyle> = {};
 
+  constructor() {
+    // Configuración por defecto: wrapText true y alineación al centro
+    this.style.alignment = {
+      horizontal: HorizontalAlignment.CENTER,
+      vertical: VerticalAlignment.MIDDLE,
+      wrapText: true,
+      shrinkToFit: true
+    };
+  }
+
   /**
    * Create a new StyleBuilder instance
    */
@@ -302,6 +312,12 @@ export class StyleBuilder implements IStyleBuilderInterface {
    */
   reset(): StyleBuilder {
     this.style = {};
+    // Restaurar configuración por defecto
+    this.style.alignment = {
+      horizontal: HorizontalAlignment.CENTER,
+      vertical: VerticalAlignment.MIDDLE,
+      wrapText: true
+    };
     return this;
   }
 

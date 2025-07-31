@@ -3,26 +3,29 @@
   "version": "1.0.0",
   "description": "Advanced Excel file generator with TypeScript support, comprehensive styling, and optimized performance",
   "type": "module",
-  "main": "dist/han-excel-builder.js",
+  "main": "dist/han-excel.cjs.js",
+  "module": "dist/han-excel.es.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/han-excel-builder.js",
+      "import": "./dist/han-excel.es.js",
+      "require": "./dist/han-excel.cjs.js",
       "types": "./dist/index.d.ts"
     },
     "./styles": {
       "import": "./dist/styles.js",
+      "require": "./dist/styles.js",
       "types": "./dist/styles.d.ts"
     },
     "./utils": {
       "import": "./dist/utils.js",
+      "require": "./dist/utils.js",
       "types": "./dist/utils.d.ts"
     }
   },
   "files": [
     "dist/**/*",
-    "README.md",
-    "CHANGELOG.md"
+    "README.md"
   ],
   "scripts": {
     "dev": "vite",
@@ -36,7 +39,7 @@
     "type-check": "tsc --noEmit",
     "docs": "typedoc src/index.ts --out docs",
     "clean": "rimraf dist docs",
-    "prepublishOnly": "npm run clean && npm run build && npm run test"
+    "prepublishOnly": "npm run clean && npm run build && npm run type-check"
   },
   "keywords": [
     "excel",
@@ -46,18 +49,21 @@
     "report",
     "spreadsheet",
     "workbook",
-    "worksheet"
+    "worksheet",
+    "excel-generator",
+    "excel-builder",
+    "excel-export"
   ],
   "author": "Han Excel Team",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/han-excel-builder.git"
+    "url": "https://github.com/hannndler/-han-excel.git"
   },
   "bugs": {
-    "url": "https://github.com/your-org/han-excel-builder/issues"
+    "url": "https://github.com/hannndler/-han-excel/issues"
   },
-  "homepage": "https://github.com/your-org/han-excel-builder#readme",
+  "homepage": "https://github.com/hannndler/-han-excel#readme",
   "devDependencies": {
     "@types/file-saver": "^2.0.7",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
