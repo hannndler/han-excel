@@ -1235,6 +1235,12 @@ export declare interface IWorksheet {
     addRow(row: IDataCell[] | IDataCell): this;
     /** Add a footer or footers */
     addFooter(footer: IFooterCell[] | IFooterCell): this;
+    /** Add a new table to the worksheet */
+    addTable(tableConfig?: Partial<ITable>): this;
+    /** Finalize the current table with temporary data */
+    finalizeTable(): this;
+    /** Get a table by name */
+    getTable(name: string): ITable | undefined;
     /** Build the worksheet */
     build(workbook: any, options?: any): Promise<void>;
     /** Validate the worksheet */
@@ -1534,9 +1540,37 @@ export declare class Worksheet implements IWorksheet {
      */
     addFooter(footer: IFooterCell[] | IFooterCell): this;
     /**
+     * Crea una nueva tabla y la agrega al worksheet
+     */
+    addTable(tableConfig?: Partial<ITable>): this;
+    /**
+     * Finaliza la tabla actual agregando todos los elementos temporales a la última tabla
+     */
+    finalizeTable(): this;
+    /**
+     * Obtiene una tabla por nombre
+     */
+    getTable(name: string): ITable | undefined;
+    /**
      * Construye la hoja en el workbook de ExcelJS
      */
     build(workbook: default_2.Workbook, _options?: IBuildOptions): Promise<void>;
+    /**
+     * Construye una tabla individual en el worksheet
+     */
+    private buildTable;
+    /**
+     * Construcción tradicional para compatibilidad hacia atrás
+     */
+    private buildLegacyContent;
+    /**
+     * Calcula el número máximo de columnas para una tabla
+     */
+    private calculateTableMaxColumns;
+    /**
+     * Aplica el estilo de tabla a un rango específico
+     */
+    private applyTableStyle;
     /**
      * Construye headers anidados recursivamente
      * @param ws - Worksheet de ExcelJS

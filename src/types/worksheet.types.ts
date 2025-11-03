@@ -108,6 +108,12 @@ export interface IWorksheet {
   addRow(row: IDataCell[] | IDataCell): this;
   /** Add a footer or footers */
   addFooter(footer: IFooterCell[] | IFooterCell): this;
+  /** Add a new table to the worksheet */
+  addTable(tableConfig?: Partial<ITable>): this;
+  /** Finalize the current table with temporary data */
+  finalizeTable(): this;
+  /** Get a table by name */
+  getTable(name: string): ITable | undefined;
   /** Build the worksheet */
   build(workbook: any, options?: any): Promise<void>;
   /** Validate the worksheet */

@@ -1,6 +1,6 @@
 {
   "name": "han-excel-builder",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "Advanced Excel file generator with TypeScript support, comprehensive styling, and optimized performance",
   "type": "module",
   "main": "dist/han-excel.cjs.js",

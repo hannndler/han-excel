@@ -76,6 +76,73 @@ export class Worksheet implements IWorksheet {
   }
 
   /**
+   * Crea una nueva tabla y la agrega al worksheet
+   */
+  addTable(tableConfig: Partial<ITable> = {}): this {
+    const table: ITable = {
+      name: tableConfig.name || `Table_${this.tables.length + 1}`,
+      headers: tableConfig.headers || [],
+      subHeaders: tableConfig.subHeaders || [],
+      body: tableConfig.body || [],
+      footers: tableConfig.footers || [],
+      showBorders: tableConfig.showBorders !== false,
+      showStripes: tableConfig.showStripes !== false,
+      style: tableConfig.style || 'TableStyleLight1',
+      ...tableConfig
+    };
+    
+    this.tables.push(table);
+    return this;
+  }
+
+  /**
+   * Finaliza la tabla actual agregando todos los elementos temporales a la última tabla
+   */
+  finalizeTable(): this {
+    if (this.tables.length === 0) {
+      // Si no hay tablas, crear una nueva con los datos temporales
+      this.addTable();
+    }
+    
+    const currentTable = this.tables[this.tables.length - 1];
+    if (!currentTable) {
+      throw new Error('No se pudo obtener la tabla actual');
+    }
+    
+    // Agregar headers, subheaders, body y footers a la tabla actual
+    if (this.headers.length > 0) {
+      currentTable.headers = [...(currentTable.headers || []), ...this.headers];
+    }
+    
+    if (this.subHeaders.length > 0) {
+      currentTable.subHeaders = [...(currentTable.subHeaders || []), ...this.subHeaders];
+    }
+    
+    if (this.body.length > 0) {
+      currentTable.body = [...(currentTable.body || []), ...this.body];
+    }
+    
+    if (this.footers.length > 0) {
+      currentTable.footers = [...(currentTable.footers || []), ...this.footers];
+    }
+    
+    // Limpiar las estructuras temporales
+    this.headers = [];
+    this.subHeaders = [];
+    this.body = [];
+    this.footers = [];
+    
+    return this;
+  }
+
+  /**
+   * Obtiene una tabla por nombre
+   */
+  getTable(name: string): ITable | undefined {
+    return this.tables.find(table => table.name === name);
+  }
+
+  /**
    * Construye la hoja en el workbook de ExcelJS
    */
   async build(workbook: ExcelJS.Workbook, _options: IBuildOptions = {}): Promise<void> {
@@ -89,6 +156,83 @@ export class Worksheet implements IWorksheet {
 
     let rowPointer = 1;
     
+    // Si hay tablas definidas, construir cada tabla
+    if (this.tables.length > 0) {
+      for (let i = 0; i < this.tables.length; i++) {
+        const table = this.tables[i];
+        if (table) {
+          rowPointer = await this.buildTable(ws, table, rowPointer, i > 0);
+        }
+      }
+    } else {
+      // Construcción tradicional para compatibilidad hacia atrás
+      rowPointer = await this.buildLegacyContent(ws, rowPointer);
+    }
+    
+    this.isBuilt = true;
+  }
+
+  /**
+   * Construye una tabla individual en el worksheet
+   */
+  private async buildTable(ws: ExcelJS.Worksheet, table: ITable, startRow: number, addSpacing: boolean = false): Promise<number> {
+    let rowPointer = startRow;
+    
+    // Agregar espacio entre tablas si no es la primera
+    if (addSpacing) {
+      rowPointer += 2; // 2 filas de espacio
+    }
+    
+    // Headers principales de la tabla
+    if (table.headers && table.headers.length > 0) {
+      for (const header of table.headers) {
+        ws.addRow([header.value]);
+        if (header.mergeCell) {
+          const maxCols = this.calculateTableMaxColumns(table);
+          ws.mergeCells(rowPointer, 1, rowPointer, maxCols);
+        }
+        if (header.styles) {
+          ws.getRow(rowPointer).eachCell((cell: any) => {
+            cell.style = this.convertStyle(header.styles);
+          });
+        }
+        rowPointer++;
+      }
+    }
+    
+    // SubHeaders con soporte para anidación
+    if (table.subHeaders && table.subHeaders.length > 0) {
+      rowPointer = this.buildNestedHeaders(ws, rowPointer, table.subHeaders);
+    }
+    
+    // Body (soporta children)
+    if (table.body && table.body.length > 0) {
+      for (const row of table.body) {
+        rowPointer = this.addDataRowRecursive(ws, rowPointer, row);
+      }
+    }
+    
+    // Footers
+    if (table.footers && table.footers.length > 0) {
+      for (const footer of table.footers) {
+        rowPointer = this.addFooterRow(ws, rowPointer, footer);
+      }
+    }
+    
+    // Aplicar estilo de tabla si está configurado
+    if (table.showBorders || table.showStripes) {
+      this.applyTableStyle(ws, table, startRow, rowPointer - 1);
+    }
+    
+    return rowPointer;
+  }
+
+  /**
+   * Construcción tradicional para compatibilidad hacia atrás
+   */
+  private async buildLegacyContent(ws: ExcelJS.Worksheet, startRow: number): Promise<number> {
+    let rowPointer = startRow;
+    
     // Headers principales
     if (this.headers.length > 0) {
       this.headers.forEach(header => {
@@ -97,7 +241,7 @@ export class Worksheet implements IWorksheet {
           ws.mergeCells(rowPointer, 1, rowPointer, (this.getMaxColumns() || 1));
         }
         if (header.styles) {
-          ws.getRow(rowPointer).eachCell(cell => {
+          ws.getRow(rowPointer).eachCell((cell: any) => {
             cell.style = this.convertStyle(header.styles);
           });
         }
@@ -122,7 +266,66 @@ export class Worksheet implements IWorksheet {
       }
     }
     
-    this.isBuilt = true;
+    return rowPointer;
+  }
+
+  /**
+   * Calcula el número máximo de columnas para una tabla
+   */
+  private calculateTableMaxColumns(table: ITable): number {
+    let maxCols = 0;
+    
+    if (table.subHeaders && table.subHeaders.length > 0) {
+      for (const header of table.subHeaders) {
+        maxCols += this.calculateHeaderColSpan(header);
+      }
+    }
+    
+    return maxCols || 1;
+  }
+
+  /**
+   * Aplica el estilo de tabla a un rango específico
+   */
+  private applyTableStyle(ws: ExcelJS.Worksheet, table: ITable, startRow: number, endRow: number): void {
+    const maxCols = this.calculateTableMaxColumns(table);
+    
+    // Aplicar bordes si está configurado
+    if (table.showBorders) {
+      for (let row = startRow; row <= endRow; row++) {
+        for (let col = 1; col <= maxCols; col++) {
+          const cell = ws.getRow(row).getCell(col);
+          if (!cell.style) cell.style = {};
+          if (!cell.style.border) {
+            cell.style.border = {
+              top: { style: 'thin', color: { argb: 'FF8EAADB' } },
+              left: { style: 'thin', color: { argb: 'FF8EAADB' } },
+              bottom: { style: 'thin', color: { argb: 'FF8EAADB' } },
+              right: { style: 'thin', color: { argb: 'FF8EAADB' } }
+            };
+          }
+        }
+      }
+    }
+    
+    // Aplicar rayas alternadas si está configurado
+    if (table.showStripes) {
+      for (let row = startRow; row <= endRow; row++) {
+        if ((row - startRow) % 2 === 1) { // Filas impares (empezando desde 0)
+          for (let col = 1; col <= maxCols; col++) {
+            const cell = ws.getRow(row).getCell(col);
+            if (!cell.style) cell.style = {};
+            if (!cell.style.fill) {
+              cell.style.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFF2F2F2' }
+              };
+            }
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -194,7 +397,6 @@ export class Worksheet implements IWorksheet {
     const colSpan = this.calculateHeaderColSpan(header);
     if (depth === 0) {
       // Nivel principal del header
-      console.log(' paso dios mio header', header.value);
       const mergeRange = colSpan > 1 ? { start: startCol, end: startCol + colSpan - 1 } : null;
       return {
         value: typeof header.value === 'string' ? header.value : String(header.value || ''),
@@ -464,7 +666,6 @@ export class Worksheet implements IWorksheet {
   private addDataRowRecursive(ws: ExcelJS.Worksheet, rowPointer: number, row: IDataCell): number {
     // Calcular las columnas basándose en la estructura de subheaders
     const columnPositions = this.calculateDataColumnPositions();
-    console.log('columnPositions', columnPositions);
 
     // Buscar la columna correcta para el dato principal
     let mainColPosition: number | undefined;

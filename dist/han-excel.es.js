@@ -278,6 +278,59 @@ class Worksheet {
     return this;
   }
   /**
+   * Crea una nueva tabla y la agrega al worksheet
+   */
+  addTable(tableConfig = {}) {
+    const table = {
+      name: tableConfig.name || `Table_${this.tables.length + 1}`,
+      headers: tableConfig.headers || [],
+      subHeaders: tableConfig.subHeaders || [],
+      body: tableConfig.body || [],
+      footers: tableConfig.footers || [],
+      showBorders: tableConfig.showBorders !== false,
+      showStripes: tableConfig.showStripes !== false,
+      style: tableConfig.style || "TableStyleLight1",
+      ...tableConfig
+    };
+    this.tables.push(table);
+    return this;
+  }
+  /**
+   * Finaliza la tabla actual agregando todos los elementos temporales a la última tabla
+   */
+  finalizeTable() {
+    if (this.tables.length === 0) {
+      this.addTable();
+    }
+    const currentTable = this.tables[this.tables.length - 1];
+    if (!currentTable) {
+      throw new Error("No se pudo obtener la tabla actual");
+    }
+    if (this.headers.length > 0) {
+      currentTable.headers = [...currentTable.headers || [], ...this.headers];
+    }
+    if (this.subHeaders.length > 0) {
+      currentTable.subHeaders = [...currentTable.subHeaders || [], ...this.subHeaders];
+    }
+    if (this.body.length > 0) {
+      currentTable.body = [...currentTable.body || [], ...this.body];
+    }
+    if (this.footers.length > 0) {
+      currentTable.footers = [...currentTable.footers || [], ...this.footers];
+    }
+    this.headers = [];
+    this.subHeaders = [];
+    this.body = [];
+    this.footers = [];
+    return this;
+  }
+  /**
+   * Obtiene una tabla por nombre
+   */
+  getTable(name) {
+    return this.tables.find((table) => table.name === name);
+  }
+  /**
    * Construye la hoja en el workbook de ExcelJS
    */
   async build(workbook, _options = {}) {
@@ -289,6 +342,64 @@ class Worksheet {
       pageSetup: this.config.pageSetup
     });
     let rowPointer = 1;
+    if (this.tables.length > 0) {
+      for (let i = 0; i < this.tables.length; i++) {
+        const table = this.tables[i];
+        if (table) {
+          rowPointer = await this.buildTable(ws, table, rowPointer, i > 0);
+        }
+      }
+    } else {
+      rowPointer = await this.buildLegacyContent(ws, rowPointer);
+    }
+    this.isBuilt = true;
+  }
+  /**
+   * Construye una tabla individual en el worksheet
+   */
+  async buildTable(ws, table, startRow, addSpacing = false) {
+    let rowPointer = startRow;
+    if (addSpacing) {
+      rowPointer += 2;
+    }
+    if (table.headers && table.headers.length > 0) {
+      for (const header of table.headers) {
+        ws.addRow([header.value]);
+        if (header.mergeCell) {
+          const maxCols = this.calculateTableMaxColumns(table);
+          ws.mergeCells(rowPointer, 1, rowPointer, maxCols);
+        }
+        if (header.styles) {
+          ws.getRow(rowPointer).eachCell((cell) => {
+            cell.style = this.convertStyle(header.styles);
+          });
+        }
+        rowPointer++;
+      }
+    }
+    if (table.subHeaders && table.subHeaders.length > 0) {
+      rowPointer = this.buildNestedHeaders(ws, rowPointer, table.subHeaders);
+    }
+    if (table.body && table.body.length > 0) {
+      for (const row of table.body) {
+        rowPointer = this.addDataRowRecursive(ws, rowPointer, row);
+      }
+    }
+    if (table.footers && table.footers.length > 0) {
+      for (const footer of table.footers) {
+        rowPointer = this.addFooterRow(ws, rowPointer, footer);
+      }
+    }
+    if (table.showBorders || table.showStripes) {
+      this.applyTableStyle(ws, table, startRow, rowPointer - 1);
+    }
+    return rowPointer;
+  }
+  /**
+   * Construcción tradicional para compatibilidad hacia atrás
+   */
+  async buildLegacyContent(ws, startRow) {
+    let rowPointer = startRow;
     if (this.headers.length > 0) {
       this.headers.forEach((header) => {
         ws.addRow([header.value]);
@@ -314,7 +425,60 @@ class Worksheet {
         rowPointer = this.addFooterRow(ws, rowPointer, footer);
       }
     }
-    this.isBuilt = true;
+    return rowPointer;
+  }
+  /**
+   * Calcula el número máximo de columnas para una tabla
+   */
+  calculateTableMaxColumns(table) {
+    let maxCols = 0;
+    if (table.subHeaders && table.subHeaders.length > 0) {
+      for (const header of table.subHeaders) {
+        maxCols += this.calculateHeaderColSpan(header);
+      }
+    }
+    return maxCols || 1;
+  }
+  /**
+   * Aplica el estilo de tabla a un rango específico
+   */
+  applyTableStyle(ws, table, startRow, endRow) {
+    const maxCols = this.calculateTableMaxColumns(table);
+    if (table.showBorders) {
+      for (let row = startRow; row <= endRow; row++) {
+        for (let col = 1; col <= maxCols; col++) {
+          const cell = ws.getRow(row).getCell(col);
+          if (!cell.style)
+            cell.style = {};
+          if (!cell.style.border) {
+            cell.style.border = {
+              top: { style: "thin", color: { argb: "FF8EAADB" } },
+              left: { style: "thin", color: { argb: "FF8EAADB" } },
+              bottom: { style: "thin", color: { argb: "FF8EAADB" } },
+              right: { style: "thin", color: { argb: "FF8EAADB" } }
+            };
+          }
+        }
+      }
+    }
+    if (table.showStripes) {
+      for (let row = startRow; row <= endRow; row++) {
+        if ((row - startRow) % 2 === 1) {
+          for (let col = 1; col <= maxCols; col++) {
+            const cell = ws.getRow(row).getCell(col);
+            if (!cell.style)
+              cell.style = {};
+            if (!cell.style.fill) {
+              cell.style.fill = {
+                type: "pattern",
+                pattern: "solid",
+                fgColor: { argb: "FFF2F2F2" }
+              };
+            }
+          }
+        }
+      }
+    }
   }
   /**
    * Construye headers anidados recursivamente
@@ -366,7 +530,6 @@ class Worksheet {
   getHeaderAtDepth(header, depth, startCol) {
     const colSpan = this.calculateHeaderColSpan(header);
     if (depth === 0) {
-      console.log(" paso dios mio header", header.value);
       const mergeRange = colSpan > 1 ? { start: startCol, end: startCol + colSpan - 1 } : null;
       return {
         value: typeof header.value === "string" ? header.value : String(header.value || ""),
@@ -571,7 +734,6 @@ class Worksheet {
    */
   addDataRowRecursive(ws, rowPointer, row) {
     const columnPositions = this.calculateDataColumnPositions();
-    console.log("columnPositions", columnPositions);
     let mainColPosition;
     if (row.key && columnPositions[row.key]) {
       mainColPosition = columnPositions[row.key];
