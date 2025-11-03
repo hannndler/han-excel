@@ -194,7 +194,6 @@ export class Worksheet implements IWorksheet {
     const colSpan = this.calculateHeaderColSpan(header);
     if (depth === 0) {
       // Nivel principal del header
-      console.log(' paso dios mio header', header.value);
       const mergeRange = colSpan > 1 ? { start: startCol, end: startCol + colSpan - 1 } : null;
       return {
         value: typeof header.value === 'string' ? header.value : String(header.value || ''),
@@ -464,7 +463,6 @@ export class Worksheet implements IWorksheet {
   private addDataRowRecursive(ws: ExcelJS.Worksheet, rowPointer: number, row: IDataCell): number {
     // Calcular las columnas basándose en la estructura de subheaders
     const columnPositions = this.calculateDataColumnPositions();
-    console.log('columnPositions', columnPositions);
 
     // Buscar la columna correcta para el dato principal
     let mainColPosition: number | undefined;
