@@ -73,6 +73,8 @@ export declare type Color = string | {
     theme: number;
 };
 
+declare type DetailedMapper = (data: IDetailedFormat) => unknown;
+
 /**
  * Error types for validation
  */
@@ -250,6 +252,78 @@ export { ExcelBuilder }
 export default ExcelBuilder;
 
 /**
+ * ExcelReader class for reading Excel files and converting to JSON
+ */
+export declare class ExcelReader {
+    /**
+     * Read Excel file from ArrayBuffer
+     */
+    static fromBuffer<T extends OutputFormat = OutputFormat.WORKSHEET>(buffer: ArrayBuffer, options?: IExcelReaderOptions): Promise<ExcelReaderResult<T>>;
+    /**
+     * Read Excel file from Blob
+     */
+    static fromBlob<T extends OutputFormat = OutputFormat.WORKSHEET>(blob: Blob, options?: IExcelReaderOptions): Promise<ExcelReaderResult<T>>;
+    /**
+     * Read Excel file from File (browser)
+     */
+    static fromFile<T extends OutputFormat = OutputFormat.WORKSHEET>(file: File, options?: IExcelReaderOptions): Promise<ExcelReaderResult<T>>;
+    /**
+     * Read Excel file from path (Node.js)
+     * Note: This method only works in Node.js environment
+     */
+    /**
+     * Read Excel file from path (Node.js only)
+     * Note: This method only works in Node.js environment
+     */
+    static fromPath<T extends OutputFormat = OutputFormat.WORKSHEET>(filePath: string, options?: IExcelReaderOptions): Promise<ExcelReaderResult<T>>;
+    /**
+     * Convert ExcelJS Workbook to JSON
+     */
+    private static convertWorkbookToJson;
+    /**
+     * Convert ExcelJS Worksheet to JSON
+     */
+    private static convertSheetToJson;
+    /**
+     * Convert ExcelJS Cell to JSON
+     */
+    private static convertCellToJson;
+    /**
+     * Convert workbook to detailed format (with position information)
+     */
+    private static convertToDetailedFormat;
+    /**
+     * Convert workbook to flat format (just data)
+     */
+    private static convertToFlatFormat;
+    /**
+     * Convert a single sheet to flat format
+     */
+    private static convertSheetToFlat;
+    /**
+     * Get cell value with type information
+     */
+    private static getCellValue;
+    /**
+     * Convert column number to letter (1 = A, 2 = B, 27 = AA, etc.)
+     */
+    private static numberToColumnLetter;
+}
+
+/**
+ * Reader result - generic type based on output format
+ */
+declare type ExcelReaderResult<T extends OutputFormat = OutputFormat.WORKSHEET> = T extends OutputFormat.DETAILED ? Result<IDetailedFormat> & {
+    processingTime?: number;
+} : T extends OutputFormat.FLAT ? Result<IFlatFormat | IFlatFormatMultiSheet> & {
+    processingTime?: number;
+} : Result<IJsonWorkbook> & {
+    processingTime?: number;
+};
+
+declare type FlatMapper = (data: IFlatFormat | IFlatFormatMultiSheet) => unknown;
+
+/**
  * Font style options
  */
 export declare enum FontStyle {
@@ -318,6 +392,8 @@ export declare interface IBaseCell {
     jump?: boolean;
     /** Hyperlink URL */
     link?: string;
+    /** Text mask for hyperlink (displayed text when link is present) */
+    mask?: string;
     /** Excel formula */
     formula?: string;
     /** Number format for numeric cells */
@@ -645,6 +721,51 @@ export declare interface IDataValidation {
 }
 
 /**
+ * Detailed cell format - includes position information
+ */
+declare interface IDetailedCell {
+    /** Cell value */
+    value: unknown;
+    /** Cell text (string representation) */
+    text: string;
+    /** Column number (1-based) */
+    column: number;
+    /** Column letter (e.g., A, B, C) */
+    columnLetter: string;
+    /** Row number (1-based) */
+    row: number;
+    /** Cell reference (e.g., A1) */
+    reference: string;
+    /** Sheet name */
+    sheet: string;
+    /** Cell type */
+    type?: string;
+    /** Formatted value (if includeFormatting is true) */
+    formattedValue?: string;
+    /** Formula (if includeFormulas is true) */
+    formula?: string;
+}
+
+/**
+ * Detailed format result - array of cells with position
+ */
+declare interface IDetailedFormat {
+    /** Array of all cells with detailed information */
+    cells: IDetailedCell[];
+    /** Total number of cells */
+    totalCells: number;
+    /** Workbook metadata */
+    metadata?: {
+        title?: string;
+        author?: string;
+        company?: string;
+        created?: Date | string;
+        modified?: Date | string;
+        description?: string;
+    };
+}
+
+/**
  * Download options interface
  */
 export declare interface IDownloadOptions extends IBuildOptions {
@@ -760,6 +881,40 @@ export declare interface IExcelBuilderConfig {
 }
 
 /**
+ * Options for reading Excel files
+ */
+declare interface IExcelReaderOptions {
+    /** Output format (default: 'worksheet') */
+    outputFormat?: OutputFormat | 'worksheet' | 'detailed' | 'flat';
+    /** Mapper function to transform the response data */
+    mapper?: WorksheetMapper | DetailedMapper | FlatMapper;
+    /** Whether to include empty rows */
+    includeEmptyRows?: boolean;
+    /** Whether to use first row as headers */
+    useFirstRowAsHeaders?: boolean;
+    /** Custom headers mapping (column index -> header name) */
+    headers?: string[] | Record<number, string>;
+    /** Sheet name or index to read (if not specified, reads all sheets) */
+    sheetName?: string | number;
+    /** Starting row (1-based, default: 1) */
+    startRow?: number;
+    /** Ending row (1-based, if not specified, reads until end) */
+    endRow?: number;
+    /** Starting column (1-based, default: 1) */
+    startColumn?: number;
+    /** Ending column (1-based, if not specified, reads until end) */
+    endColumn?: number;
+    /** Whether to include cell formatting information */
+    includeFormatting?: boolean;
+    /** Whether to include formulas */
+    includeFormulas?: boolean;
+    /** Date format for date cells */
+    dateFormat?: string;
+    /** Whether to convert dates to ISO strings */
+    datesAsISO?: boolean;
+}
+
+/**
  * Fill pattern interface
  */
 export declare interface IFill {
@@ -780,6 +935,39 @@ export declare interface IFill {
     }>;
     /** Gradient angle (for linear gradients) */
     angle?: number;
+}
+
+/**
+ * Flat format result - just the data values
+ */
+declare interface IFlatFormat {
+    /** Array of row data (as objects if useFirstRowAsHeaders is true, or as arrays) */
+    data: Array<Record<string, unknown> | unknown[]>;
+    /** Headers (if useFirstRowAsHeaders is true) */
+    headers?: string[];
+    /** Sheet name */
+    sheet?: string;
+    /** Total number of rows */
+    totalRows: number;
+}
+
+/**
+ * Flat format result for multiple sheets
+ */
+declare interface IFlatFormatMultiSheet {
+    /** Data organized by sheet name */
+    sheets: Record<string, IFlatFormat>;
+    /** Total number of sheets */
+    totalSheets: number;
+    /** Workbook metadata */
+    metadata?: {
+        title?: string;
+        author?: string;
+        company?: string;
+        created?: Date | string;
+        modified?: Date | string;
+        description?: string;
+    };
 }
 
 /**
@@ -846,6 +1034,71 @@ export declare interface IHeaderCell extends IBaseCell {
     isMainHeader?: boolean;
     /** Header level (1 = main, 2 = sub, etc.) */
     level?: number;
+}
+
+/**
+ * Cell data in JSON format
+ */
+declare interface IJsonCell {
+    /** Cell value */
+    value: unknown;
+    /** Cell type */
+    type?: string;
+    /** Cell reference (e.g., A1) */
+    reference?: string;
+    /** Formatted value (if includeFormatting is true) */
+    formattedValue?: string;
+    /** Formula (if includeFormulas is true) */
+    formula?: string;
+}
+
+/**
+ * Row data in JSON format
+ */
+declare interface IJsonRow {
+    /** Row number (1-based) */
+    rowNumber: number;
+    /** Cells in the row */
+    cells: IJsonCell[];
+    /** Row as object (if useFirstRowAsHeaders is true) */
+    data?: Record<string, unknown>;
+}
+
+/**
+ * Sheet data in JSON format
+ */
+declare interface IJsonSheet {
+    /** Sheet name */
+    name: string;
+    /** Sheet index */
+    index: number;
+    /** Rows in the sheet */
+    rows: IJsonRow[];
+    /** Headers (if useFirstRowAsHeaders is true) */
+    headers?: string[];
+    /** Total number of rows */
+    totalRows: number;
+    /** Total number of columns */
+    totalColumns: number;
+}
+
+/**
+ * Workbook data in JSON format
+ */
+declare interface IJsonWorkbook {
+    /** Workbook metadata */
+    metadata?: {
+        title?: string;
+        author?: string;
+        company?: string;
+        created?: Date | string;
+        modified?: Date | string;
+        description?: string;
+    };
+    /** Sheets in the workbook */
+    sheets: IJsonSheet[];
+    /** Total number of sheets */
+    totalSheets: number;
 }
 
 /**
@@ -1363,6 +1616,18 @@ export declare enum NumberFormat {
 }
 
 /**
+ * Output format types
+ */
+declare enum OutputFormat {
+    /** Format by worksheet (structured with sheets, rows, cells) */
+    WORKSHEET = "worksheet",
+    /** Detailed format with text, column, row information */
+    DETAILED = "detailed",
+    /** Flat format - just the data without structure */
+    FLAT = "flat"
+}
+
+/**
  * Result union type
  */
 export declare type Result<T = unknown> = ISuccessResult<T> | IErrorResult;
@@ -1621,10 +1886,23 @@ export declare class Worksheet implements IWorksheet {
      */
     private addFooterRow;
     /**
+     * Aplica width y height a una celda/fila
+     */
+    private applyCellDimensions;
+    /**
+     * Procesa el valor de una celda considerando links y máscaras
+     * Si el tipo es LINK o hay un link, crea un hipervínculo en Excel
+     */
+    private processCellValue;
+    /**
      * Agrega una fila de datos y sus children recursivamente
      * @returns el siguiente rowPointer disponible
      */
     private addDataRowRecursive;
+    /**
+     * Convierte un color a formato ExcelJS (ARGB)
+     */
+    private convertColor;
     /**
      * Convierte el estilo personalizado a formato compatible con ExcelJS
      */
@@ -1644,5 +1922,10 @@ export declare enum WorksheetEventType {
     CELL_UPDATED = "cellUpdated",
     CELL_DELETED = "cellDeleted"
 }
+
+/**
+ * Mapper function types for different output formats
+ */
+declare type WorksheetMapper = (data: IJsonWorkbook) => unknown;
 
 export { }

@@ -5,4 +5,8 @@ export * from './worksheet.types';
 export * from './style.types';
 export * from './builder.types';
 export * from './validation.types';
-export * from './events.types'; 
+export * from './events.types';
+export * from './reader.types';
+
+// Reader exports
+export { OutputFormat } from './reader.types'; 

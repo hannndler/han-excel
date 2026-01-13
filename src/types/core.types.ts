@@ -117,6 +117,8 @@ export interface IBaseCell {
   jump?: boolean;
   /** Hyperlink URL */
   link?: string;
+  /** Text mask for hyperlink (displayed text when link is present) */
+  mask?: string;
   /** Excel formula */
   formula?: string;
   /** Number format for numeric cells */

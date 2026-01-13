@@ -10,7 +10,7 @@ import {
   IFooterCell
 } from '../types/cell.types';
 import { IBuildOptions } from '../types/builder.types';
-import { Result, ErrorType } from '../types/core.types';
+import { Result, ErrorType, CellType } from '../types/core.types';
 
 /**
  * Worksheet - Representa una hoja de cálculo dentro del builder
@@ -186,7 +186,7 @@ export class Worksheet implements IWorksheet {
     // Headers principales de la tabla
     if (table.headers && table.headers.length > 0) {
       for (const header of table.headers) {
-        ws.addRow([header.value]);
+        ws.addRow([this.processCellValue(header)]);
         if (header.mergeCell) {
           const maxCols = this.calculateTableMaxColumns(table);
           ws.mergeCells(rowPointer, 1, rowPointer, maxCols);
@@ -196,6 +196,8 @@ export class Worksheet implements IWorksheet {
             cell.style = this.convertStyle(header.styles);
           });
         }
+        // Aplicar dimensiones de celda
+        this.applyCellDimensions(ws, rowPointer, 1, header);
         rowPointer++;
       }
     }
@@ -236,7 +238,7 @@ export class Worksheet implements IWorksheet {
     // Headers principales
     if (this.headers.length > 0) {
       this.headers.forEach(header => {
-        ws.addRow([header.value]);
+        ws.addRow([this.processCellValue(header)]);
         if (header.mergeCell) {
           ws.mergeCells(rowPointer, 1, rowPointer, (this.getMaxColumns() || 1));
         }
@@ -245,6 +247,8 @@ export class Worksheet implements IWorksheet {
             cell.style = this.convertStyle(header.styles);
           });
         }
+        // Aplicar dimensiones de celda
+        this.applyCellDimensions(ws, rowPointer, 1, header);
         rowPointer++;
       });
     }
@@ -351,20 +355,24 @@ export class Worksheet implements IWorksheet {
           // Nivel principal del header
           const headerInfo = this.getHeaderAtDepth(header, depth, colIndex);
           const cell = row.getCell(colIndex);
-          cell.value = headerInfo.value;
+          cell.value = this.processCellValue(header);
           if (headerInfo.style) {
             cell.style = this.convertStyle(headerInfo.style);
           }
+          // Aplicar dimensiones de celda
+          this.applyCellDimensions(ws, currentRow, colIndex, header);
           colIndex += headerInfo.colSpan;
         } else {
           // Nivel de children - procesar todos los children directos
           if (header.children && header.children.length > 0) {
             for (const child of header.children) {
               const cell = row.getCell(colIndex);
-              cell.value = typeof child.value === 'string' ? child.value : String(child.value || '');
+              cell.value = this.processCellValue(child);
               if (child.styles || header.styles) {
                 cell.style = this.convertStyle(child.styles || header.styles);
               }
+              // Aplicar dimensiones de celda para children
+              this.applyCellDimensions(ws, currentRow, colIndex, child);
               colIndex += this.calculateHeaderColSpan(child);
             }
           } else {
@@ -608,13 +616,16 @@ export class Worksheet implements IWorksheet {
     // Escribir el footer en la columna correcta
     const excelRow = ws.getRow(rowPointer);
     const footerCell = excelRow.getCell(footerColPosition);
-    footerCell.value = footer.value;
+    footerCell.value = this.processCellValue(footer);
     if (footer.styles) {
       footerCell.style = this.convertStyle(footer.styles);
     }
     if (footer.numberFormat) {
       footerCell.numFmt = footer.numberFormat;
     }
+    
+    // Aplicar dimensiones de celda
+    this.applyCellDimensions(ws, rowPointer, footerColPosition, footer);
     
     // Aplicar merge si está configurado
     if (footer.mergeCell && footer.mergeTo) {
@@ -639,13 +650,16 @@ export class Worksheet implements IWorksheet {
           
           if (colPosition !== undefined) {
             const childCell = excelRow.getCell(colPosition);
-            childCell.value = child.value;
+            childCell.value = this.processCellValue(child);
             if (child.styles) {
               childCell.style = this.convertStyle(child.styles);
             }
             if (child.numberFormat) {
               childCell.numFmt = child.numberFormat;
             }
+            
+            // Aplicar dimensiones de celda para children
+            this.applyCellDimensions(ws, rowPointer, colPosition, child);
           }
         }
       }
@@ -657,6 +671,51 @@ export class Worksheet implements IWorksheet {
     }
     
     return rowPointer;
+  }
+
+  /**
+   * Aplica width y height a una celda/fila
+   */
+  private applyCellDimensions(ws: ExcelJS.Worksheet, row: number, col: number, cell: IDataCell | IHeaderCell | IFooterCell): void {
+    // Aplicar rowHeight si está definido
+    if (cell.rowHeight !== undefined) {
+      const excelRow = ws.getRow(row);
+      excelRow.height = cell.rowHeight;
+    }
+    
+    // Aplicar colWidth si está definido
+    if (cell.colWidth !== undefined) {
+      const excelCol = ws.getColumn(col);
+      excelCol.width = cell.colWidth;
+    }
+  }
+
+  /**
+   * Procesa el valor de una celda considerando links y máscaras
+   * Si el tipo es LINK o hay un link, crea un hipervínculo en Excel
+   */
+  private processCellValue(cell: IDataCell | IHeaderCell | IFooterCell): ExcelJS.CellValue {
+    // Si hay un link o el tipo es LINK, crear hipervínculo
+    if (cell.link || cell.type === CellType.LINK) {
+      const linkUrl = cell.link || (typeof cell.value === 'string' ? cell.value : '');
+      
+      // Si no hay URL válida, retornar el valor normal
+      if (!linkUrl || linkUrl.trim() === '') {
+        return cell.value;
+      }
+      
+      // Determinar el texto visible: usar máscara si existe, sino usar value, sino usar la URL
+      const displayText = cell.mask || cell.value || linkUrl;
+      
+      // Crear objeto de hipervínculo para ExcelJS
+      return {
+        text: String(displayText),
+        hyperlink: linkUrl
+      } as any;
+    }
+    
+    // Si no hay link, retornar el valor normal
+    return cell.value;
   }
 
   /**
@@ -687,13 +746,16 @@ export class Worksheet implements IWorksheet {
     // Escribir el dato principal en la columna correcta
     const excelRow = ws.getRow(rowPointer);
     const mainCell = excelRow.getCell(mainColPosition);
-    mainCell.value = row.value;
+    mainCell.value = this.processCellValue(row);
     if (row.styles) {
       mainCell.style = this.convertStyle(row.styles);
     }
     if (row.numberFormat) {
       mainCell.numFmt = row.numberFormat;
     }
+    
+    // Aplicar dimensiones de celda
+    this.applyCellDimensions(ws, rowPointer, mainColPosition, row);
     
     // Si hay children, escribirlos en las columnas correspondientes
     if (row.children && row.children.length > 0) {
@@ -713,13 +775,16 @@ export class Worksheet implements IWorksheet {
           
           if (colPosition !== undefined) {
             const childCell = excelRow.getCell(colPosition);
-            childCell.value = child.value;
+            childCell.value = this.processCellValue(child);
             if (child.styles) {
               childCell.style = this.convertStyle(child.styles);
             }
             if (child.numberFormat) {
               childCell.numFmt = child.numberFormat;
             }
+            
+            // Aplicar dimensiones de celda para children
+            this.applyCellDimensions(ws, rowPointer, colPosition, child);
           }
         }
       }
@@ -734,6 +799,51 @@ export class Worksheet implements IWorksheet {
   }
 
   /**
+   * Convierte un color a formato ExcelJS (ARGB)
+   */
+  private convertColor(color: any): any {
+    if (!color) return undefined;
+    
+    // Si ya es un objeto con argb, retornarlo
+    if (typeof color === 'object' && color.argb) {
+      return color;
+    }
+    
+    // Si es un objeto con r, g, b
+    if (typeof color === 'object' && 'r' in color && 'g' in color && 'b' in color) {
+      const r = color.r.toString(16).padStart(2, '0');
+      const g = color.g.toString(16).padStart(2, '0');
+      const b = color.b.toString(16).padStart(2, '0');
+      return { argb: `FF${r}${g}${b}`.toUpperCase() };
+    }
+    
+    // Si es un string (hex)
+    if (typeof color === 'string') {
+      // Remover # si existe
+      let hex = color.replace('#', '');
+      
+      // Si es formato corto (RGB), expandirlo
+      if (hex.length === 3) {
+        hex = hex.split('').map(c => c + c).join('');
+      }
+      
+      // Asegurar que tenga alpha (FF = completamente opaco)
+      if (hex.length === 6) {
+        hex = 'FF' + hex.toUpperCase();
+      }
+      
+      return { argb: hex };
+    }
+    
+    // Si es un objeto theme
+    if (typeof color === 'object' && 'theme' in color) {
+      return color;
+    }
+    
+    return undefined;
+  }
+
+  /**
    * Convierte el estilo personalizado a formato compatible con ExcelJS
    */
   private convertStyle(style: any): Partial<ExcelJS.Style> {
@@ -743,40 +853,125 @@ export class Worksheet implements IWorksheet {
     
     if (style.font) {
       converted.font = {
-        name: style.font.family,
+        name: style.font.family || style.font.name,
         size: style.font.size,
         bold: style.font.bold,
         italic: style.font.italic,
         underline: style.font.underline,
-        color: style.font.color
+        color: this.convertColor(style.font.color)
       };
     }
     
     if (style.fill) {
+      // En ExcelJS, para patrón sólido, el color de fondo debe ir en fgColor
+      // backgroundColor es el color que queremos mostrar como fondo de la celda
+      const pattern = style.fill.pattern || 'solid';
+      
+      // Para patrón sólido: backgroundColor va en fgColor (es el color visible)
+      // Para otros patrones: foregroundColor es el color del patrón, backgroundColor es el fondo
+      const fgColor = pattern === 'solid' 
+        ? (style.fill.backgroundColor || style.fill.foregroundColor)
+        : (style.fill.foregroundColor || style.fill.backgroundColor);
+      
+      // bgColor solo es relevante para patrones no sólidos
+      const bgColor = pattern !== 'solid' ? style.fill.backgroundColor : undefined;
+      
       converted.fill = {
-        type: style.fill.type,
-        pattern: style.fill.pattern,
-        fgColor: style.fill.foregroundColor,
-        bgColor: style.fill.backgroundColor
+        type: style.fill.type || 'pattern',
+        pattern: pattern,
+        fgColor: this.convertColor(fgColor),
+        bgColor: bgColor ? this.convertColor(bgColor) : undefined
       };
+      
+      // Limpiar bgColor si es undefined para evitar problemas
+      if (!converted.fill.bgColor) {
+        delete converted.fill.bgColor;
+      }
     }
     
     if (style.border) {
-      converted.border = {
-        top: style.border.top,
-        left: style.border.left,
-        bottom: style.border.bottom,
-        right: style.border.right
-      };
+      converted.border = {};
+      
+      if (style.border.top) {
+        converted.border.top = {
+          style: style.border.top.style,
+          color: this.convertColor(style.border.top.color)
+        };
+      }
+      
+      if (style.border.left) {
+        converted.border.left = {
+          style: style.border.left.style,
+          color: this.convertColor(style.border.left.color)
+        };
+      }
+      
+      if (style.border.bottom) {
+        converted.border.bottom = {
+          style: style.border.bottom.style,
+          color: this.convertColor(style.border.bottom.color)
+        };
+      }
+      
+      if (style.border.right) {
+        converted.border.right = {
+          style: style.border.right.style,
+          color: this.convertColor(style.border.right.color)
+        };
+      }
     }
     
     if (style.alignment) {
-      converted.alignment = {
-        horizontal: style.alignment.horizontal,
-        vertical: style.alignment.vertical,
-        wrapText: style.alignment.wrapText,
-        indent: style.alignment.indent
-      };
+      converted.alignment = {};
+      
+      // Horizontal alignment - validar valores permitidos
+      if (style.alignment.horizontal !== undefined) {
+        const validHorizontal = ['left', 'center', 'right', 'fill', 'justify', 'centerContinuous', 'distributed'];
+        if (validHorizontal.includes(style.alignment.horizontal)) {
+          converted.alignment.horizontal = style.alignment.horizontal as any;
+        }
+      }
+      
+      // Vertical alignment - validar valores permitidos
+      if (style.alignment.vertical !== undefined) {
+        const validVertical = ['top', 'middle', 'bottom', 'distributed', 'justify'];
+        if (validVertical.includes(style.alignment.vertical)) {
+          converted.alignment.vertical = style.alignment.vertical as any;
+        }
+      }
+      
+      // Wrap text
+      if (style.alignment.wrapText !== undefined) {
+        converted.alignment.wrapText = Boolean(style.alignment.wrapText);
+      }
+      
+      // Shrink to fit
+      if (style.alignment.shrinkToFit !== undefined) {
+        converted.alignment.shrinkToFit = Boolean(style.alignment.shrinkToFit);
+      }
+      
+      // Indent
+      if (style.alignment.indent !== undefined && typeof style.alignment.indent === 'number') {
+        converted.alignment.indent = style.alignment.indent;
+      }
+      
+      // Text rotation (0-180 grados)
+      if (style.alignment.textRotation !== undefined && typeof style.alignment.textRotation === 'number') {
+        converted.alignment.textRotation = style.alignment.textRotation;
+      }
+      
+      // Reading order
+      if (style.alignment.readingOrder !== undefined) {
+        const validReadingOrder = ['left-to-right', 'right-to-left', 'context'];
+        if (validReadingOrder.includes(style.alignment.readingOrder)) {
+          converted.alignment.readingOrder = style.alignment.readingOrder as any;
+        }
+      }
+      
+      // Solo agregar alignment si tiene al menos una propiedad
+      if (Object.keys(converted.alignment).length === 0) {
+        delete converted.alignment;
+      }
     }
     
     if (style.numFmt) {

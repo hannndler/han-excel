@@ -364,7 +364,7 @@ class Worksheet {
     }
     if (table.headers && table.headers.length > 0) {
       for (const header of table.headers) {
-        ws.addRow([header.value]);
+        ws.addRow([this.processCellValue(header)]);
         if (header.mergeCell) {
           const maxCols = this.calculateTableMaxColumns(table);
           ws.mergeCells(rowPointer, 1, rowPointer, maxCols);
@@ -374,6 +374,7 @@ class Worksheet {
             cell.style = this.convertStyle(header.styles);
           });
         }
+        this.applyCellDimensions(ws, rowPointer, 1, header);
         rowPointer++;
       }
     }
@@ -402,7 +403,7 @@ class Worksheet {
     let rowPointer = startRow;
     if (this.headers.length > 0) {
       this.headers.forEach((header) => {
-        ws.addRow([header.value]);
+        ws.addRow([this.processCellValue(header)]);
         if (header.mergeCell) {
           ws.mergeCells(rowPointer, 1, rowPointer, this.getMaxColumns() || 1);
         }
@@ -411,6 +412,7 @@ class Worksheet {
             cell.style = this.convertStyle(header.styles);
           });
         }
+        this.applyCellDimensions(ws, rowPointer, 1, header);
         rowPointer++;
       });
     }
@@ -497,19 +499,21 @@ class Worksheet {
         if (depth === 0) {
           const headerInfo = this.getHeaderAtDepth(header, depth, colIndex);
           const cell = row.getCell(colIndex);
-          cell.value = headerInfo.value;
+          cell.value = this.processCellValue(header);
           if (headerInfo.style) {
             cell.style = this.convertStyle(headerInfo.style);
           }
+          this.applyCellDimensions(ws, currentRow, colIndex, header);
           colIndex += headerInfo.colSpan;
         } else {
           if (header.children && header.children.length > 0) {
             for (const child of header.children) {
               const cell = row.getCell(colIndex);
-              cell.value = typeof child.value === "string" ? child.value : String(child.value || "");
+              cell.value = this.processCellValue(child);
               if (child.styles || header.styles) {
                 cell.style = this.convertStyle(child.styles || header.styles);
               }
+              this.applyCellDimensions(ws, currentRow, colIndex, child);
               colIndex += this.calculateHeaderColSpan(child);
             }
           } else {
@@ -691,13 +695,14 @@ class Worksheet {
     }
     const excelRow = ws.getRow(rowPointer);
     const footerCell = excelRow.getCell(footerColPosition);
-    footerCell.value = footer.value;
+    footerCell.value = this.processCellValue(footer);
     if (footer.styles) {
       footerCell.style = this.convertStyle(footer.styles);
     }
     if (footer.numberFormat) {
       footerCell.numFmt = footer.numberFormat;
     }
+    this.applyCellDimensions(ws, rowPointer, footerColPosition, footer);
     if (footer.mergeCell && footer.mergeTo) {
       ws.mergeCells(rowPointer, footerColPosition, rowPointer, footer.mergeTo);
     }
@@ -712,13 +717,14 @@ class Worksheet {
           }
           if (colPosition !== void 0) {
             const childCell = excelRow.getCell(colPosition);
-            childCell.value = child.value;
+            childCell.value = this.processCellValue(child);
             if (child.styles) {
               childCell.style = this.convertStyle(child.styles);
             }
             if (child.numberFormat) {
               childCell.numFmt = child.numberFormat;
             }
+            this.applyCellDimensions(ws, rowPointer, colPosition, child);
           }
         }
       }
@@ -727,6 +733,37 @@ class Worksheet {
       return rowPointer + 1;
     }
     return rowPointer;
+  }
+  /**
+   * Aplica width y height a una celda/fila
+   */
+  applyCellDimensions(ws, row, col, cell) {
+    if (cell.rowHeight !== void 0) {
+      const excelRow = ws.getRow(row);
+      excelRow.height = cell.rowHeight;
+    }
+    if (cell.colWidth !== void 0) {
+      const excelCol = ws.getColumn(col);
+      excelCol.width = cell.colWidth;
+    }
+  }
+  /**
+   * Procesa el valor de una celda considerando links y máscaras
+   * Si el tipo es LINK o hay un link, crea un hipervínculo en Excel
+   */
+  processCellValue(cell) {
+    if (cell.link || cell.type === CellType.LINK) {
+      const linkUrl = cell.link || (typeof cell.value === "string" ? cell.value : "");
+      if (!linkUrl || linkUrl.trim() === "") {
+        return cell.value;
+      }
+      const displayText = cell.mask || cell.value || linkUrl;
+      return {
+        text: String(displayText),
+        hyperlink: linkUrl
+      };
+    }
+    return cell.value;
   }
   /**
    * Agrega una fila de datos y sus children recursivamente
@@ -745,13 +782,14 @@ class Worksheet {
     }
     const excelRow = ws.getRow(rowPointer);
     const mainCell = excelRow.getCell(mainColPosition);
-    mainCell.value = row.value;
+    mainCell.value = this.processCellValue(row);
     if (row.styles) {
       mainCell.style = this.convertStyle(row.styles);
     }
     if (row.numberFormat) {
       mainCell.numFmt = row.numberFormat;
     }
+    this.applyCellDimensions(ws, rowPointer, mainColPosition, row);
     if (row.children && row.children.length > 0) {
       for (const child of row.children) {
         if (child) {
@@ -763,13 +801,14 @@ class Worksheet {
           }
           if (colPosition !== void 0) {
             const childCell = excelRow.getCell(colPosition);
-            childCell.value = child.value;
+            childCell.value = this.processCellValue(child);
             if (child.styles) {
               childCell.style = this.convertStyle(child.styles);
             }
             if (child.numberFormat) {
               childCell.numFmt = child.numberFormat;
             }
+            this.applyCellDimensions(ws, rowPointer, colPosition, child);
           }
         }
       }
@@ -780,6 +819,36 @@ class Worksheet {
     return rowPointer;
   }
   /**
+   * Convierte un color a formato ExcelJS (ARGB)
+   */
+  convertColor(color) {
+    if (!color)
+      return void 0;
+    if (typeof color === "object" && color.argb) {
+      return color;
+    }
+    if (typeof color === "object" && "r" in color && "g" in color && "b" in color) {
+      const r = color.r.toString(16).padStart(2, "0");
+      const g = color.g.toString(16).padStart(2, "0");
+      const b = color.b.toString(16).padStart(2, "0");
+      return { argb: `FF${r}${g}${b}`.toUpperCase() };
+    }
+    if (typeof color === "string") {
+      let hex = color.replace("#", "");
+      if (hex.length === 3) {
+        hex = hex.split("").map((c) => c + c).join("");
+      }
+      if (hex.length === 6) {
+        hex = "FF" + hex.toUpperCase();
+      }
+      return { argb: hex };
+    }
+    if (typeof color === "object" && "theme" in color) {
+      return color;
+    }
+    return void 0;
+  }
+  /**
    * Convierte el estilo personalizado a formato compatible con ExcelJS
    */
   convertStyle(style) {
@@ -788,37 +857,90 @@ class Worksheet {
     const converted = {};
     if (style.font) {
       converted.font = {
-        name: style.font.family,
+        name: style.font.family || style.font.name,
         size: style.font.size,
         bold: style.font.bold,
         italic: style.font.italic,
         underline: style.font.underline,
-        color: style.font.color
+        color: this.convertColor(style.font.color)
       };
     }
     if (style.fill) {
+      const pattern = style.fill.pattern || "solid";
+      const fgColor = pattern === "solid" ? style.fill.backgroundColor || style.fill.foregroundColor : style.fill.foregroundColor || style.fill.backgroundColor;
+      const bgColor = pattern !== "solid" ? style.fill.backgroundColor : void 0;
       converted.fill = {
-        type: style.fill.type,
-        pattern: style.fill.pattern,
-        fgColor: style.fill.foregroundColor,
-        bgColor: style.fill.backgroundColor
+        type: style.fill.type || "pattern",
+        pattern,
+        fgColor: this.convertColor(fgColor),
+        bgColor: bgColor ? this.convertColor(bgColor) : void 0
       };
+      if (!converted.fill.bgColor) {
+        delete converted.fill.bgColor;
+      }
     }
     if (style.border) {
-      converted.border = {
-        top: style.border.top,
-        left: style.border.left,
-        bottom: style.border.bottom,
-        right: style.border.right
-      };
+      converted.border = {};
+      if (style.border.top) {
+        converted.border.top = {
+          style: style.border.top.style,
+          color: this.convertColor(style.border.top.color)
+        };
+      }
+      if (style.border.left) {
+        converted.border.left = {
+          style: style.border.left.style,
+          color: this.convertColor(style.border.left.color)
+        };
+      }
+      if (style.border.bottom) {
+        converted.border.bottom = {
+          style: style.border.bottom.style,
+          color: this.convertColor(style.border.bottom.color)
+        };
+      }
+      if (style.border.right) {
+        converted.border.right = {
+          style: style.border.right.style,
+          color: this.convertColor(style.border.right.color)
+        };
+      }
     }
     if (style.alignment) {
-      converted.alignment = {
-        horizontal: style.alignment.horizontal,
-        vertical: style.alignment.vertical,
-        wrapText: style.alignment.wrapText,
-        indent: style.alignment.indent
-      };
+      converted.alignment = {};
+      if (style.alignment.horizontal !== void 0) {
+        const validHorizontal = ["left", "center", "right", "fill", "justify", "centerContinuous", "distributed"];
+        if (validHorizontal.includes(style.alignment.horizontal)) {
+          converted.alignment.horizontal = style.alignment.horizontal;
+        }
+      }
+      if (style.alignment.vertical !== void 0) {
+        const validVertical = ["top", "middle", "bottom", "distributed", "justify"];
+        if (validVertical.includes(style.alignment.vertical)) {
+          converted.alignment.vertical = style.alignment.vertical;
+        }
+      }
+      if (style.alignment.wrapText !== void 0) {
+        converted.alignment.wrapText = Boolean(style.alignment.wrapText);
+      }
+      if (style.alignment.shrinkToFit !== void 0) {
+        converted.alignment.shrinkToFit = Boolean(style.alignment.shrinkToFit);
+      }
+      if (style.alignment.indent !== void 0 && typeof style.alignment.indent === "number") {
+        converted.alignment.indent = style.alignment.indent;
+      }
+      if (style.alignment.textRotation !== void 0 && typeof style.alignment.textRotation === "number") {
+        converted.alignment.textRotation = style.alignment.textRotation;
+      }
+      if (style.alignment.readingOrder !== void 0) {
+        const validReadingOrder = ["left-to-right", "right-to-left", "context"];
+        if (validReadingOrder.includes(style.alignment.readingOrder)) {
+          converted.alignment.readingOrder = style.alignment.readingOrder;
+        }
+      }
+      if (Object.keys(converted.alignment).length === 0) {
+        delete converted.alignment;
+      }
     }
     if (style.numFmt) {
       converted.numFmt = style.numFmt;
@@ -1113,6 +1235,642 @@ class ExcelBuilder {
         writeTime: 0
       }
     };
+  }
+}
+var OutputFormat = /* @__PURE__ */ ((OutputFormat2) => {
+  OutputFormat2["WORKSHEET"] = "worksheet";
+  OutputFormat2["DETAILED"] = "detailed";
+  OutputFormat2["FLAT"] = "flat";
+  return OutputFormat2;
+})(OutputFormat || {});
+class ExcelReader {
+  /**
+   * Read Excel file from ArrayBuffer
+   */
+  static async fromBuffer(buffer, options = {}) {
+    const startTime = Date.now();
+    try {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer);
+      const outputFormat = options.outputFormat || OutputFormat.WORKSHEET;
+      const processingTime = Date.now() - startTime;
+      let result;
+      switch (outputFormat) {
+        case OutputFormat.DETAILED:
+          result = this.convertToDetailedFormat(workbook, options);
+          break;
+        case OutputFormat.FLAT:
+          result = this.convertToFlatFormat(workbook, options);
+          break;
+        case OutputFormat.WORKSHEET:
+        default:
+          result = this.convertWorkbookToJson(workbook, options);
+          break;
+      }
+      if (options.mapper) {
+        try {
+          switch (outputFormat) {
+            case OutputFormat.DETAILED:
+              result = options.mapper(result);
+              break;
+            case OutputFormat.FLAT:
+              result = options.mapper(result);
+              break;
+            case OutputFormat.WORKSHEET:
+            default:
+              result = options.mapper(result);
+              break;
+          }
+        } catch (mapperError) {
+          const errorResult = {
+            success: false,
+            error: {
+              type: ErrorType.VALIDATION_ERROR,
+              message: mapperError instanceof Error ? `Mapper function error: ${mapperError.message}` : "Error in mapper function",
+              stack: mapperError instanceof Error ? mapperError.stack || "" : ""
+            }
+          };
+          return {
+            ...errorResult,
+            processingTime: Date.now() - startTime
+          };
+        }
+      }
+      const successResult = {
+        success: true,
+        data: result,
+        processingTime
+      };
+      return successResult;
+    } catch (error) {
+      const errorResult = {
+        success: false,
+        error: {
+          type: ErrorType.VALIDATION_ERROR,
+          message: error instanceof Error ? error.message : "Error reading Excel file",
+          stack: error instanceof Error ? error.stack || "" : ""
+        }
+      };
+      const errorResponse = {
+        success: false,
+        error: errorResult.error,
+        processingTime: Date.now() - startTime
+      };
+      return errorResponse;
+    }
+  }
+  /**
+   * Read Excel file from Blob
+   */
+  static async fromBlob(blob, options = {}) {
+    const arrayBuffer = await blob.arrayBuffer();
+    return this.fromBuffer(arrayBuffer, options);
+  }
+  /**
+   * Read Excel file from File (browser)
+   */
+  static async fromFile(file, options = {}) {
+    return this.fromBlob(file, options);
+  }
+  /**
+   * Read Excel file from path (Node.js)
+   * Note: This method only works in Node.js environment
+   */
+  /**
+   * Read Excel file from path (Node.js only)
+   * Note: This method only works in Node.js environment
+   */
+  static async fromPath(filePath, options = {}) {
+    try {
+      const fs = await import("./__vite-browser-external-d06ac358.js");
+      const buffer = await fs.readFile(filePath);
+      const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+      return this.fromBuffer(arrayBuffer, options);
+    } catch (error) {
+      const isBrowserError = error instanceof Error && (error.message.includes("Cannot find module") || error.message.includes("fs") || typeof window !== "undefined");
+      const errorResult = {
+        success: false,
+        error: {
+          type: ErrorType.VALIDATION_ERROR,
+          message: isBrowserError ? "fromPath() method requires Node.js environment. Use fromFile() or fromBlob() in browser." : error instanceof Error ? error.message : "Error reading file from path",
+          stack: error instanceof Error ? error.stack || "" : ""
+        }
+      };
+      const errorResponse = {
+        ...errorResult,
+        processingTime: 0
+      };
+      return errorResponse;
+    }
+  }
+  /**
+   * Convert ExcelJS Workbook to JSON
+   */
+  static convertWorkbookToJson(workbook, options) {
+    const {
+      includeEmptyRows = false,
+      useFirstRowAsHeaders = false,
+      headers,
+      sheetName,
+      startRow = 1,
+      endRow,
+      startColumn = 1,
+      endColumn,
+      includeFormatting = false,
+      includeFormulas = false,
+      datesAsISO = true
+    } = options;
+    const metadata = {
+      title: workbook.title,
+      author: workbook.creator,
+      company: workbook.company,
+      created: workbook.created,
+      modified: workbook.modified,
+      description: workbook.description
+    };
+    let sheetsToProcess = [];
+    if (sheetName !== void 0) {
+      if (typeof sheetName === "number") {
+        const sheet = workbook.worksheets[sheetName];
+        if (sheet)
+          sheetsToProcess.push(sheet);
+      } else {
+        const sheet = workbook.getWorksheet(sheetName);
+        if (sheet)
+          sheetsToProcess.push(sheet);
+      }
+    } else {
+      sheetsToProcess = workbook.worksheets;
+    }
+    const sheets = sheetsToProcess.map((worksheet) => {
+      const sheetOptions = {
+        includeEmptyRows: includeEmptyRows ?? false,
+        useFirstRowAsHeaders: useFirstRowAsHeaders ?? false,
+        startRow: startRow ?? 1,
+        startColumn: startColumn ?? 1,
+        includeFormatting: includeFormatting ?? false,
+        includeFormulas: includeFormulas ?? false,
+        datesAsISO: datesAsISO ?? true
+      };
+      if (headers !== void 0) {
+        sheetOptions.headers = headers;
+      }
+      if (endRow !== void 0) {
+        sheetOptions.endRow = endRow;
+      }
+      if (endColumn !== void 0) {
+        sheetOptions.endColumn = endColumn;
+      }
+      return this.convertSheetToJson(worksheet, sheetOptions);
+    });
+    const workbookResult = {
+      sheets,
+      totalSheets: sheets.length
+    };
+    const hasMetadata = Object.values(metadata).some((val) => val !== void 0 && val !== null);
+    if (hasMetadata) {
+      workbookResult.metadata = metadata;
+    }
+    return workbookResult;
+  }
+  /**
+   * Convert ExcelJS Worksheet to JSON
+   */
+  static convertSheetToJson(worksheet, options) {
+    const {
+      includeEmptyRows,
+      useFirstRowAsHeaders,
+      headers,
+      startRow,
+      endRow,
+      startColumn,
+      endColumn,
+      includeFormatting,
+      includeFormulas,
+      datesAsISO
+    } = options;
+    const rows = [];
+    let headerRow;
+    let maxColumns = 0;
+    const actualStartRow = Math.max(startRow, 1);
+    const actualEndRow = endRow || worksheet.rowCount || worksheet.lastRow?.number || 1;
+    const actualStartCol = Math.max(startColumn, 1);
+    const actualEndCol = endColumn || worksheet.columnCount || worksheet.lastColumn?.number || 1;
+    for (let rowNum = actualStartRow; rowNum <= actualEndRow; rowNum++) {
+      const excelRow = worksheet.getRow(rowNum);
+      const cells = [];
+      let hasData = false;
+      for (let colNum = actualStartCol; colNum <= actualEndCol; colNum++) {
+        const cell = excelRow.getCell(colNum);
+        if (!cell.value && !includeEmptyRows) {
+          continue;
+        }
+        const jsonCell = this.convertCellToJson(cell, {
+          includeFormatting,
+          includeFormulas,
+          datesAsISO
+        });
+        cells.push(jsonCell);
+        hasData = true;
+      }
+      if (cells.length > maxColumns) {
+        maxColumns = cells.length;
+      }
+      if (!hasData && !includeEmptyRows) {
+        continue;
+      }
+      if (useFirstRowAsHeaders && rowNum === actualStartRow) {
+        headerRow = cells.map((cell) => {
+          if (headers && Array.isArray(headers)) {
+            return headers[cells.indexOf(cell)] || String(cell.value || "");
+          } else if (headers && typeof headers === "object") {
+            return headers[actualStartCol + cells.indexOf(cell)] || String(cell.value || "");
+          }
+          return String(cell.value || "");
+        });
+        continue;
+      }
+      let rowData;
+      if (useFirstRowAsHeaders && headerRow) {
+        rowData = {};
+        cells.forEach((cell, index) => {
+          const header = headerRow[index] || `column_${index + 1}`;
+          rowData[header] = cell.value;
+        });
+      }
+      const jsonRow = {
+        rowNumber: rowNum,
+        cells
+      };
+      if (rowData) {
+        jsonRow.data = rowData;
+      }
+      rows.push(jsonRow);
+    }
+    const sheet = {
+      name: worksheet.name,
+      index: worksheet.id || 0,
+      rows,
+      totalRows: rows.length,
+      totalColumns: maxColumns
+    };
+    if (headerRow) {
+      sheet.headers = headerRow;
+    }
+    return sheet;
+  }
+  /**
+   * Convert ExcelJS Cell to JSON
+   */
+  static convertCellToJson(cell, options) {
+    const { includeFormatting, includeFormulas, datesAsISO } = options;
+    let value = cell.value;
+    let type;
+    if (cell.type === ExcelJS.ValueType.Null || cell.value === null || cell.value === void 0) {
+      value = null;
+      type = "null";
+    } else if (cell.type === ExcelJS.ValueType.Number) {
+      value = cell.value;
+      type = "number";
+    } else if (cell.type === ExcelJS.ValueType.String) {
+      value = cell.value;
+      type = "string";
+    } else if (cell.type === ExcelJS.ValueType.Date) {
+      const dateValue = cell.value;
+      value = datesAsISO ? dateValue.toISOString() : dateValue;
+      type = "date";
+    } else if (cell.type === ExcelJS.ValueType.Boolean) {
+      value = cell.value;
+      type = "boolean";
+    } else if (cell.type === ExcelJS.ValueType.Formula) {
+      if (includeFormulas && cell.formula) {
+        value = cell.result || cell.value;
+        type = "formula";
+      } else {
+        value = cell.result || cell.value;
+        type = typeof cell.result === "number" ? "number" : typeof cell.result === "string" ? "string" : "unknown";
+      }
+    } else if (cell.type === ExcelJS.ValueType.Hyperlink) {
+      const hyperlinkValue = cell.value;
+      if (typeof hyperlinkValue === "object" && hyperlinkValue !== null) {
+        value = hyperlinkValue.text || hyperlinkValue.hyperlink || cell.value;
+      } else {
+        value = hyperlinkValue;
+      }
+      type = "hyperlink";
+    } else {
+      value = cell.value;
+      type = "unknown";
+    }
+    const jsonCell = {
+      value,
+      type,
+      reference: cell.address
+    };
+    if (includeFormatting && cell.numFmt) {
+      jsonCell.formattedValue = String(value);
+    }
+    if (includeFormulas && cell.formula) {
+      jsonCell.formula = cell.formula;
+    }
+    return jsonCell;
+  }
+  /**
+   * Convert workbook to detailed format (with position information)
+   */
+  static convertToDetailedFormat(workbook, options) {
+    const {
+      includeEmptyRows = false,
+      includeFormatting = false,
+      includeFormulas = false,
+      datesAsISO = true,
+      sheetName,
+      startRow = 1,
+      endRow,
+      startColumn = 1,
+      endColumn
+    } = options;
+    const cells = [];
+    const metadata = {
+      title: workbook.title,
+      author: workbook.creator,
+      company: workbook.company,
+      created: workbook.created,
+      modified: workbook.modified,
+      description: workbook.description
+    };
+    let sheetsToProcess = [];
+    if (sheetName !== void 0) {
+      if (typeof sheetName === "number") {
+        const sheet = workbook.worksheets[sheetName];
+        if (sheet)
+          sheetsToProcess.push(sheet);
+      } else {
+        const sheet = workbook.getWorksheet(sheetName);
+        if (sheet)
+          sheetsToProcess.push(sheet);
+      }
+    } else {
+      sheetsToProcess = workbook.worksheets;
+    }
+    for (const worksheet of sheetsToProcess) {
+      const actualStartRow = Math.max(startRow, 1);
+      const actualEndRow = endRow || worksheet.rowCount || worksheet.lastRow?.number || 1;
+      const actualStartCol = Math.max(startColumn, 1);
+      const actualEndCol = endColumn || worksheet.columnCount || worksheet.lastColumn?.number || 1;
+      for (let rowNum = actualStartRow; rowNum <= actualEndRow; rowNum++) {
+        const excelRow = worksheet.getRow(rowNum);
+        for (let colNum = actualStartCol; colNum <= actualEndCol; colNum++) {
+          const cell = excelRow.getCell(colNum);
+          if (!cell.value && !includeEmptyRows) {
+            continue;
+          }
+          const columnLetter = this.numberToColumnLetter(colNum);
+          const cellValue = this.getCellValue(cell, { includeFormatting, includeFormulas, datesAsISO });
+          const detailedCell = {
+            value: cellValue.value,
+            text: String(cellValue.value ?? ""),
+            column: colNum,
+            columnLetter,
+            row: rowNum,
+            reference: cell.address || `${columnLetter}${rowNum}`,
+            sheet: worksheet.name
+          };
+          if (cellValue.type) {
+            detailedCell.type = cellValue.type;
+          }
+          if (cellValue.formattedValue) {
+            detailedCell.formattedValue = cellValue.formattedValue;
+          }
+          if (cellValue.formula) {
+            detailedCell.formula = cellValue.formula;
+          }
+          cells.push(detailedCell);
+        }
+      }
+    }
+    const result = {
+      cells,
+      totalCells: cells.length
+    };
+    const hasMetadata = Object.values(metadata).some((val) => val !== void 0 && val !== null);
+    if (hasMetadata) {
+      result.metadata = metadata;
+    }
+    return result;
+  }
+  /**
+   * Convert workbook to flat format (just data)
+   */
+  static convertToFlatFormat(workbook, options) {
+    const {
+      useFirstRowAsHeaders = false,
+      includeEmptyRows = false,
+      sheetName,
+      startRow = 1,
+      endRow,
+      startColumn = 1,
+      endColumn
+    } = options;
+    const metadata = {
+      title: workbook.title,
+      author: workbook.creator,
+      company: workbook.company,
+      created: workbook.created,
+      modified: workbook.modified,
+      description: workbook.description
+    };
+    let sheetsToProcess = [];
+    if (sheetName !== void 0) {
+      if (typeof sheetName === "number") {
+        const sheet = workbook.worksheets[sheetName];
+        if (sheet)
+          sheetsToProcess.push(sheet);
+      } else {
+        const sheet = workbook.getWorksheet(sheetName);
+        if (sheet)
+          sheetsToProcess.push(sheet);
+      }
+    } else {
+      sheetsToProcess = workbook.worksheets;
+    }
+    if (sheetsToProcess.length === 1) {
+      const worksheet = sheetsToProcess[0];
+      const flatOptions = {
+        useFirstRowAsHeaders,
+        includeEmptyRows,
+        startRow
+      };
+      if (endRow !== void 0) {
+        flatOptions.endRow = endRow;
+      }
+      if (startColumn !== void 0) {
+        flatOptions.startColumn = startColumn;
+      }
+      if (endColumn !== void 0) {
+        flatOptions.endColumn = endColumn;
+      }
+      const flatData = this.convertSheetToFlat(worksheet, flatOptions);
+      return flatData;
+    }
+    const sheets = {};
+    for (const worksheet of sheetsToProcess) {
+      const flatOptions = {
+        useFirstRowAsHeaders,
+        includeEmptyRows,
+        startRow
+      };
+      if (endRow !== void 0) {
+        flatOptions.endRow = endRow;
+      }
+      if (startColumn !== void 0) {
+        flatOptions.startColumn = startColumn;
+      }
+      if (endColumn !== void 0) {
+        flatOptions.endColumn = endColumn;
+      }
+      const flatData = this.convertSheetToFlat(worksheet, flatOptions);
+      sheets[worksheet.name] = flatData;
+    }
+    const result = {
+      sheets,
+      totalSheets: Object.keys(sheets).length
+    };
+    const hasMetadata = Object.values(metadata).some((val) => val !== void 0 && val !== null);
+    if (hasMetadata) {
+      result.metadata = metadata;
+    }
+    return result;
+  }
+  /**
+   * Convert a single sheet to flat format
+   */
+  static convertSheetToFlat(worksheet, options) {
+    const {
+      useFirstRowAsHeaders,
+      includeEmptyRows,
+      startRow,
+      endRow,
+      startColumn,
+      endColumn
+    } = options;
+    const actualStartRow = Math.max(startRow, 1);
+    const actualEndRow = endRow || worksheet.rowCount || worksheet.lastRow?.number || 1;
+    const actualStartCol = Math.max(startColumn || 1, 1);
+    const actualEndCol = endColumn || worksheet.columnCount || worksheet.lastColumn?.number || 1;
+    const data = [];
+    let headers;
+    if (useFirstRowAsHeaders) {
+      const headerRow = worksheet.getRow(actualStartRow);
+      headers = [];
+      for (let colNum = actualStartCol; colNum <= actualEndCol; colNum++) {
+        const cell = headerRow.getCell(colNum);
+        headers.push(String(cell.value || `Column${colNum}`));
+      }
+    }
+    const dataStartRow = useFirstRowAsHeaders ? actualStartRow + 1 : actualStartRow;
+    for (let rowNum = dataStartRow; rowNum <= actualEndRow; rowNum++) {
+      const excelRow = worksheet.getRow(rowNum);
+      const rowValues = [];
+      let hasData = false;
+      for (let colNum = actualStartCol; colNum <= actualEndCol; colNum++) {
+        const cell = excelRow.getCell(colNum);
+        const cellValue = this.getCellValue(cell, { includeFormatting: false, includeFormulas: false, datesAsISO: true });
+        rowValues.push(cellValue.value);
+        if (cellValue.value !== null && cellValue.value !== void 0 && cellValue.value !== "") {
+          hasData = true;
+        }
+      }
+      if (!hasData && !includeEmptyRows) {
+        continue;
+      }
+      if (useFirstRowAsHeaders && headers) {
+        const rowObject = {};
+        headers.forEach((header, index) => {
+          rowObject[header] = rowValues[index];
+        });
+        data.push(rowObject);
+      } else {
+        data.push(rowValues);
+      }
+    }
+    const result = {
+      data,
+      totalRows: data.length,
+      sheet: worksheet.name
+    };
+    if (headers) {
+      result.headers = headers;
+    }
+    return result;
+  }
+  /**
+   * Get cell value with type information
+   */
+  static getCellValue(cell, options) {
+    const { includeFormatting, includeFormulas, datesAsISO } = options;
+    let value = cell.value;
+    let type;
+    let formattedValue;
+    let formula;
+    if (cell.type === ExcelJS.ValueType.Null || cell.value === null || cell.value === void 0) {
+      value = null;
+      type = "null";
+    } else if (cell.type === ExcelJS.ValueType.Number) {
+      value = cell.value;
+      type = "number";
+    } else if (cell.type === ExcelJS.ValueType.String) {
+      value = cell.value;
+      type = "string";
+    } else if (cell.type === ExcelJS.ValueType.Date) {
+      const dateValue = cell.value;
+      value = datesAsISO ? dateValue.toISOString() : dateValue;
+      type = "date";
+    } else if (cell.type === ExcelJS.ValueType.Boolean) {
+      value = cell.value;
+      type = "boolean";
+    } else if (cell.type === ExcelJS.ValueType.Formula) {
+      if (includeFormulas && cell.formula) {
+        formula = cell.formula;
+        value = cell.result || cell.value;
+        type = "formula";
+      } else {
+        value = cell.result || cell.value;
+        type = typeof cell.result === "number" ? "number" : typeof cell.result === "string" ? "string" : "unknown";
+      }
+    } else if (cell.type === ExcelJS.ValueType.Hyperlink) {
+      const hyperlinkValue = cell.value;
+      if (typeof hyperlinkValue === "object" && hyperlinkValue !== null) {
+        value = hyperlinkValue.text || hyperlinkValue.hyperlink || cell.value;
+      } else {
+        value = hyperlinkValue;
+      }
+      type = "hyperlink";
+    } else {
+      value = cell.value;
+      type = "unknown";
+    }
+    if (includeFormatting && cell.numFmt) {
+      formattedValue = String(value);
+    }
+    return {
+      value,
+      type,
+      ...formattedValue && { formattedValue },
+      ...formula && { formula }
+    };
+  }
+  /**
+   * Convert column number to letter (1 = A, 2 = B, 27 = AA, etc.)
+   */
+  static numberToColumnLetter(columnNumber) {
+    let result = "";
+    while (columnNumber > 0) {
+      columnNumber--;
+      result = String.fromCharCode(65 + columnNumber % 26) + result;
+      columnNumber = Math.floor(columnNumber / 26);
+    }
+    return result;
   }
 }
 class StyleBuilder {
@@ -1437,6 +2195,7 @@ export {
   ErrorType,
   EventEmitter,
   ExcelBuilder,
+  ExcelReader,
   FontStyle,
   HorizontalAlignment,
   NumberFormat,

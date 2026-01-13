@@ -6,6 +6,7 @@
 
 // Core exports
 export { ExcelBuilder } from './core/ExcelBuilder';
+export { ExcelReader } from './core/ExcelReader';
 export { Worksheet } from './core/Worksheet';
 export { StyleBuilder } from './styles/StyleBuilder';
 

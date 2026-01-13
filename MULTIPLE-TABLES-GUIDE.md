@@ -244,3 +244,10 @@ Ver los archivos de ejemplo:
 4. **El espaciado entre tablas** se maneja automáticamente
 5. **Compatibilidad total** con el código existente
 
+
+
+
+
+
+
+
