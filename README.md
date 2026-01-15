@@ -2048,32 +2048,7 @@ npm run type-check
 npm run docs
 ```
 
-## 📋 Migration from legacy-excel
 
-If you're migrating from the legacy version, here's a quick comparison:
-
-```typescript
-// Legacy way
-const worksheets: IWorksheets[] = [{
-  name: "Report",
-  tables: [{
-    headers: [...],
-    subHeaders: [...],
-    body: [...],
-    footers: [...]
-  }]
-}];
-await fileBuilder(worksheets, "report");
-
-// New way
-const builder = new ExcelBuilder();
-const worksheet = builder.addWorksheet('Report');
-worksheet.addHeader({...});
-worksheet.addSubHeaders([...]);
-worksheet.addRow([...]);
-worksheet.addFooter([...]);
-await builder.generateAndDownload('report');
-```
 
 ## 📚 Additional Resources
 
