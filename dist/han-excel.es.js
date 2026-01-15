@@ -238,6 +238,21 @@ class Worksheet {
   subHeaders = [];
   body = [];
   footers = [];
+  // Features adicionales
+  images = [];
+  rowGroups = [];
+  columnGroups = [];
+  namedRanges = [];
+  excelTables = [];
+  hiddenRows = /* @__PURE__ */ new Set();
+  hiddenColumns = /* @__PURE__ */ new Set();
+  pivotTables = [];
+  slicers = [];
+  watermarks = [];
+  dataConnections = [];
+  // Estilos y tema del workbook (no se guardan en el objeto de ExcelJS)
+  customStyles;
+  theme;
   constructor(config) {
     this.config = config;
   }
@@ -331,6 +346,119 @@ class Worksheet {
     return this.tables.find((table) => table.name === name);
   }
   /**
+   * Agrega una imagen al worksheet
+   */
+  addImage(image) {
+    this.images.push(image);
+    return this;
+  }
+  /**
+   * Agrupa filas (crea esquema colapsable)
+   */
+  groupRows(startRow, endRow, collapsed = false) {
+    this.rowGroups.push({ start: startRow, end: endRow, collapsed });
+    return this;
+  }
+  /**
+   * Agrupa columnas (crea esquema colapsable)
+   */
+  groupColumns(startCol, endCol, collapsed = false) {
+    this.columnGroups.push({ start: startCol, end: endCol, collapsed });
+    return this;
+  }
+  /**
+   * Agrega un rango con nombre
+   */
+  addNamedRange(name, range, scope) {
+    let rangeString;
+    if (typeof range === "string") {
+      rangeString = range;
+    } else {
+      const startRef = range.start.reference || `${this.numberToColumnLetter(range.start.col)}${range.start.row}`;
+      const endRef = range.end.reference || `${this.numberToColumnLetter(range.end.col)}${range.end.row}`;
+      rangeString = `${startRef}:${endRef}`;
+    }
+    const namedRange = { name, range: rangeString };
+    if (scope !== void 0) {
+      namedRange.scope = scope;
+    }
+    this.namedRanges.push(namedRange);
+    return this;
+  }
+  /**
+   * Agrega una tabla estructurada de Excel
+   */
+  addExcelTable(table) {
+    this.excelTables.push(table);
+    return this;
+  }
+  /**
+   * Oculta filas
+   */
+  hideRows(rows) {
+    const rowsArray = Array.isArray(rows) ? rows : [rows];
+    rowsArray.forEach((row) => this.hiddenRows.add(row));
+    return this;
+  }
+  /**
+   * Muestra filas
+   */
+  showRows(rows) {
+    const rowsArray = Array.isArray(rows) ? rows : [rows];
+    rowsArray.forEach((row) => this.hiddenRows.delete(row));
+    return this;
+  }
+  /**
+   * Oculta columnas
+   */
+  hideColumns(columns) {
+    const columnsArray = Array.isArray(columns) ? columns : [columns];
+    columnsArray.forEach((col) => {
+      const colNum = typeof col === "string" ? this.columnLetterToNumber(col) : col;
+      this.hiddenColumns.add(colNum);
+    });
+    return this;
+  }
+  /**
+   * Muestra columnas
+   */
+  showColumns(columns) {
+    const columnsArray = Array.isArray(columns) ? columns : [columns];
+    columnsArray.forEach((col) => {
+      const colNum = typeof col === "string" ? this.columnLetterToNumber(col) : col;
+      this.hiddenColumns.delete(colNum);
+    });
+    return this;
+  }
+  /**
+   * Agrega una tabla dinámica (pivot table)
+   */
+  addPivotTable(pivotTable) {
+    this.pivotTables.push(pivotTable);
+    return this;
+  }
+  /**
+   * Agrega un slicer a una tabla o tabla dinámica
+   */
+  addSlicer(slicer) {
+    this.slicers.push(slicer);
+    return this;
+  }
+  /**
+   * Agrega una marca de agua al worksheet
+   */
+  addWatermark(watermark) {
+    this.watermarks.push(watermark);
+    return this;
+  }
+  /**
+   * Agrega una conexión de datos
+   */
+  addDataConnection(connection) {
+    this.dataConnections.push(connection);
+    return this;
+  }
+  /**
    * Construye la hoja en el workbook de ExcelJS
    */
   async build(workbook, _options = {}) {
@@ -341,16 +469,73 @@ class Worksheet {
       },
       pageSetup: this.config.pageSetup
     });
+    this.customStyles = workbook.__customStyles;
+    this.theme = workbook.__theme;
     let rowPointer = 1;
     if (this.tables.length > 0) {
+      let tableStartRow = rowPointer;
       for (let i = 0; i < this.tables.length; i++) {
         const table = this.tables[i];
         if (table) {
+          tableStartRow = rowPointer;
           rowPointer = await this.buildTable(ws, table, rowPointer, i > 0);
+          if (table.autoFilter && rowPointer > tableStartRow) {
+            this.applyAutoFilter(ws, table, tableStartRow, rowPointer - 1);
+          }
         }
       }
     } else {
       rowPointer = await this.buildLegacyContent(ws, rowPointer);
+    }
+    if (this.config.autoFilter?.enabled) {
+      this.applyWorksheetAutoFilter(ws, rowPointer);
+    }
+    this.applyViews(ws);
+    if (this.config.protected) {
+      ws.protect(this.config.protectionPassword || "", {
+        selectLockedCells: false,
+        selectUnlockedCells: true,
+        formatCells: false,
+        formatColumns: false,
+        formatRows: false,
+        insertColumns: false,
+        insertRows: false,
+        insertHyperlinks: false,
+        deleteColumns: false,
+        deleteRows: false,
+        sort: false,
+        autoFilter: false,
+        pivotTables: false
+      });
+    }
+    for (const image of this.images) {
+      await this.applyImage(ws, image);
+    }
+    for (const group of this.rowGroups) {
+      this.applyRowGrouping(ws, group.start, group.end, group.collapsed);
+    }
+    for (const group of this.columnGroups) {
+      this.applyColumnGrouping(ws, group.start, group.end, group.collapsed);
+    }
+    for (const namedRange of this.namedRanges) {
+      workbook.definedNames.add(namedRange.name, namedRange.range);
+    }
+    for (const excelTable of this.excelTables) {
+      this.applyExcelTable(ws, excelTable);
+    }
+    this.applyAdvancedPrintSettings(ws);
+    this.applyHiddenRowsColumns(ws);
+    for (const pivotTable of this.pivotTables) {
+      await this.applyPivotTable(ws, pivotTable);
+    }
+    for (const slicer of this.slicers) {
+      await this.applySlicer(ws, slicer);
+    }
+    for (const watermark of this.watermarks) {
+      await this.applyWatermark(ws, watermark);
+    }
+    for (const connection of this.dataConnections) {
+      await this.applyDataConnection(workbook, connection);
     }
     this.isBuilt = true;
   }
@@ -364,17 +549,53 @@ class Worksheet {
     }
     if (table.headers && table.headers.length > 0) {
       for (const header of table.headers) {
-        ws.addRow([this.processCellValue(header)]);
+        const cell = ws.getRow(rowPointer).getCell(1);
+        if (header.richText && header.richText.length > 0) {
+          cell.value = {
+            richText: header.richText.map((run) => ({
+              text: run.text,
+              font: run.font ? { name: run.font } : void 0,
+              size: run.size,
+              color: run.color ? this.convertColorToExcelJS(run.color) : void 0,
+              bold: run.bold,
+              italic: run.italic,
+              underline: run.underline,
+              strike: run.strikethrough
+            })).filter((run) => run.text !== void 0)
+          };
+        } else {
+          cell.value = this.processCellValue(header);
+        }
         if (header.mergeCell) {
           const maxCols = this.calculateTableMaxColumns(table);
           ws.mergeCells(rowPointer, 1, rowPointer, maxCols);
         }
         if (header.styles) {
-          ws.getRow(rowPointer).eachCell((cell) => {
-            cell.style = this.convertStyle(header.styles);
+          ws.getRow(rowPointer).eachCell((cell2) => {
+            cell2.style = this.convertStyle(header.styles);
           });
         }
+        if (header.cellProtection) {
+          cell.protection = {
+            locked: header.cellProtection.locked ?? true,
+            hidden: header.cellProtection.hidden ?? false
+          };
+        } else if (header.protected !== void 0) {
+          cell.protection = {
+            locked: header.protected,
+            hidden: false
+          };
+        }
         this.applyCellDimensions(ws, rowPointer, 1, header);
+        if (header.comment) {
+          this.applyCellComment(ws, rowPointer, 1, header.comment);
+        }
+        if (header.validation) {
+          this.applyDataValidation(ws, rowPointer, 1, header.validation);
+        }
+        if (header.styles?.conditionalFormats) {
+          this.applyConditionalFormatting(ws, rowPointer, 1, header.styles.conditionalFormats);
+        }
         rowPointer++;
       }
     }
@@ -413,6 +634,15 @@ class Worksheet {
           });
         }
         this.applyCellDimensions(ws, rowPointer, 1, header);
+        if (header.comment) {
+          this.applyCellComment(ws, rowPointer, 1, header.comment);
+        }
+        if (header.validation) {
+          this.applyDataValidation(ws, rowPointer, 1, header.validation);
+        }
+        if (header.styles?.conditionalFormats) {
+          this.applyConditionalFormatting(ws, rowPointer, 1, header.styles.conditionalFormats);
+        }
         rowPointer++;
       });
     }
@@ -504,6 +734,15 @@ class Worksheet {
             cell.style = this.convertStyle(headerInfo.style);
           }
           this.applyCellDimensions(ws, currentRow, colIndex, header);
+          if (header.comment) {
+            this.applyCellComment(ws, currentRow, colIndex, header.comment);
+          }
+          if (header.validation) {
+            this.applyDataValidation(ws, currentRow, colIndex, header.validation);
+          }
+          if (header.styles?.conditionalFormats) {
+            this.applyConditionalFormatting(ws, currentRow, colIndex, header.styles.conditionalFormats);
+          }
           colIndex += headerInfo.colSpan;
         } else {
           if (header.children && header.children.length > 0) {
@@ -514,6 +753,15 @@ class Worksheet {
                 cell.style = this.convertStyle(child.styles || header.styles);
               }
               this.applyCellDimensions(ws, currentRow, colIndex, child);
+              if (child.comment) {
+                this.applyCellComment(ws, currentRow, colIndex, child.comment);
+              }
+              if (child.validation) {
+                this.applyDataValidation(ws, currentRow, colIndex, child.validation);
+              }
+              if (child.styles?.conditionalFormats) {
+                this.applyConditionalFormatting(ws, currentRow, colIndex, child.styles.conditionalFormats);
+              }
               colIndex += this.calculateHeaderColSpan(child);
             }
           } else {
@@ -698,11 +946,30 @@ class Worksheet {
     footerCell.value = this.processCellValue(footer);
     if (footer.styles) {
       footerCell.style = this.convertStyle(footer.styles);
+    } else if (footer.styleName) {
+      const style = this.getPredefinedStyle(footer.styleName);
+      if (style) {
+        footerCell.style = this.convertStyle(style);
+      }
+    } else {
+      const themeStyle = this.getThemeStyle("footer");
+      if (themeStyle) {
+        footerCell.style = this.convertStyle(themeStyle);
+      }
     }
     if (footer.numberFormat) {
       footerCell.numFmt = footer.numberFormat;
     }
     this.applyCellDimensions(ws, rowPointer, footerColPosition, footer);
+    if (footer.comment) {
+      this.applyCellComment(ws, rowPointer, footerColPosition, footer.comment);
+    }
+    if (footer.validation) {
+      this.applyDataValidation(ws, rowPointer, footerColPosition, footer.validation);
+    }
+    if (footer.styles?.conditionalFormats) {
+      this.applyConditionalFormatting(ws, rowPointer, footerColPosition, footer.styles.conditionalFormats);
+    }
     if (footer.mergeCell && footer.mergeTo) {
       ws.mergeCells(rowPointer, footerColPosition, rowPointer, footer.mergeTo);
     }
@@ -725,6 +992,15 @@ class Worksheet {
               childCell.numFmt = child.numberFormat;
             }
             this.applyCellDimensions(ws, rowPointer, colPosition, child);
+            if (child.comment) {
+              this.applyCellComment(ws, rowPointer, colPosition, child.comment);
+            }
+            if (child.validation) {
+              this.applyDataValidation(ws, rowPointer, colPosition, child.validation);
+            }
+            if (child.styles?.conditionalFormats) {
+              this.applyConditionalFormatting(ws, rowPointer, colPosition, child.styles.conditionalFormats);
+            }
           }
         }
       }
@@ -745,6 +1021,184 @@ class Worksheet {
     if (cell.colWidth !== void 0) {
       const excelCol = ws.getColumn(col);
       excelCol.width = cell.colWidth;
+    }
+  }
+  /**
+   * Aplica comentario a una celda
+   */
+  applyCellComment(ws, row, col, comment) {
+    if (!comment || comment.trim() === "") {
+      return;
+    }
+    const cell = ws.getRow(row).getCell(col);
+    if (typeof comment === "string") {
+      cell.note = comment;
+    }
+  }
+  /**
+   * Aplica validación de datos a una celda
+   */
+  applyDataValidation(ws, row, col, validation) {
+    if (!validation) {
+      return;
+    }
+    const cell = ws.getRow(row).getCell(col);
+    const validationType = validation.type === "time" ? "date" : validation.type;
+    const dataValidation = {
+      type: validationType,
+      allowBlank: validation.allowBlank ?? true,
+      formulae: []
+      // Inicializar como array vacío, se llenará si hay fórmulas
+    };
+    if (validation.operator) {
+      dataValidation.operator = validation.operator;
+    }
+    if (validation.formula1 !== void 0) {
+      if (typeof validation.formula1 === "string") {
+        dataValidation.formulae = [validation.formula1];
+      } else if (validation.formula1 instanceof Date) {
+        dataValidation.formulae = [validation.formula1.toISOString()];
+      } else {
+        dataValidation.formulae = [validation.formula1];
+      }
+    }
+    if (validation.formula2 !== void 0) {
+      if (!dataValidation.formulae) {
+        dataValidation.formulae = [];
+      }
+      if (typeof validation.formula2 === "string") {
+        dataValidation.formulae.push(validation.formula2);
+      } else if (validation.formula2 instanceof Date) {
+        dataValidation.formulae.push(validation.formula2.toISOString());
+      } else {
+        dataValidation.formulae.push(validation.formula2);
+      }
+    }
+    if (validation.showErrorMessage) {
+      dataValidation.showErrorMessage = true;
+      if (validation.errorMessage) {
+        dataValidation.error = validation.errorMessage;
+      }
+    }
+    if (validation.showInputMessage) {
+      dataValidation.showInputMessage = true;
+      if (validation.inputMessage) {
+        dataValidation.prompt = validation.inputMessage;
+      }
+    }
+    cell.dataValidation = dataValidation;
+  }
+  /**
+   * Aplica formato condicional a una celda
+   */
+  applyConditionalFormatting(ws, row, col, conditionalFormats) {
+    if (!conditionalFormats || conditionalFormats.length === 0) {
+      return;
+    }
+    const cell = ws.getRow(row).getCell(col);
+    const cellAddress = cell.address;
+    conditionalFormats.forEach((format, index) => {
+      const rule = {
+        type: format.type,
+        priority: format.priority ?? index + 1,
+        stopIfTrue: format.stopIfTrue ?? false
+      };
+      if (format.operator) {
+        rule.operator = format.operator;
+      }
+      if (format.formula) {
+        rule.formulae = [format.formula];
+      } else if (format.values && format.values.length > 0) {
+        rule.formulae = format.values.map((v) => {
+          if (typeof v === "string") {
+            return v;
+          } else if (v instanceof Date) {
+            return v.toISOString();
+          } else {
+            return String(v);
+          }
+        });
+      }
+      if (format.style) {
+        const style = this.convertStyle(format.style);
+        rule.style = style;
+      }
+      ws.addConditionalFormatting({
+        ref: cellAddress,
+        rules: [rule]
+      });
+    });
+  }
+  /**
+   * Aplica filtro automático a una tabla
+   */
+  applyAutoFilter(ws, table, startRow, endRow) {
+    if (!table.autoFilter) {
+      return;
+    }
+    const maxCols = this.calculateTableMaxColumns(table);
+    const headerRow = startRow;
+    const dataEndRow = endRow;
+    if (maxCols > 0 && dataEndRow >= headerRow) {
+      ws.autoFilter = {
+        from: {
+          row: headerRow,
+          column: 1
+        },
+        to: {
+          row: dataEndRow,
+          column: maxCols
+        }
+      };
+    }
+  }
+  /**
+   * Aplica filtro automático a nivel de worksheet
+   */
+  applyWorksheetAutoFilter(ws, lastRow) {
+    const autoFilterConfig = this.config.autoFilter;
+    if (!autoFilterConfig || !autoFilterConfig.enabled) {
+      return;
+    }
+    if (autoFilterConfig.range) {
+      ws.autoFilter = {
+        from: {
+          row: autoFilterConfig.range.start?.row || 1,
+          column: autoFilterConfig.range.start?.col || 1
+        },
+        to: {
+          row: autoFilterConfig.range.end?.row || lastRow,
+          column: autoFilterConfig.range.end?.col || ws.columnCount || 1
+        }
+      };
+      return;
+    }
+    if (autoFilterConfig.startRow !== void 0 || autoFilterConfig.endRow !== void 0 || autoFilterConfig.startColumn !== void 0 || autoFilterConfig.endColumn !== void 0) {
+      ws.autoFilter = {
+        from: {
+          row: autoFilterConfig.startRow || 1,
+          column: autoFilterConfig.startColumn || 1
+        },
+        to: {
+          row: autoFilterConfig.endRow || lastRow,
+          column: autoFilterConfig.endColumn || ws.columnCount || 1
+        }
+      };
+      return;
+    }
+    const startRow = this.headers.length > 0 ? this.headers.length + (this.subHeaders.length > 0 ? this.getMaxHeaderDepth(this.subHeaders) : 0) : 1;
+    const maxCols = this.getMaxColumns() || ws.columnCount || 1;
+    if (lastRow >= startRow && maxCols > 0) {
+      ws.autoFilter = {
+        from: {
+          row: startRow,
+          column: 1
+        },
+        to: {
+          row: lastRow,
+          column: maxCols
+        }
+      };
     }
   }
   /**
@@ -782,14 +1236,59 @@ class Worksheet {
     }
     const excelRow = ws.getRow(rowPointer);
     const mainCell = excelRow.getCell(mainColPosition);
-    mainCell.value = this.processCellValue(row);
+    if (row.richText && row.richText.length > 0) {
+      mainCell.value = {
+        richText: row.richText.map((run) => ({
+          text: run.text,
+          font: run.font ? { name: run.font } : void 0,
+          size: run.size,
+          color: run.color ? this.convertColorToExcelJS(run.color) : void 0,
+          bold: run.bold,
+          italic: run.italic,
+          underline: run.underline,
+          strike: run.strikethrough
+        })).filter((run) => run.text !== void 0)
+      };
+    } else {
+      mainCell.value = this.processCellValue(row);
+    }
     if (row.styles) {
       mainCell.style = this.convertStyle(row.styles);
+    } else if (row.styleName) {
+      const style = this.getPredefinedStyle(row.styleName);
+      if (style) {
+        mainCell.style = this.convertStyle(style);
+      }
+    } else {
+      const themeStyle = this.getThemeStyle("body", rowPointer);
+      if (themeStyle) {
+        mainCell.style = this.convertStyle(themeStyle);
+      }
     }
     if (row.numberFormat) {
       mainCell.numFmt = row.numberFormat;
     }
+    if (row.cellProtection) {
+      mainCell.protection = {
+        locked: row.cellProtection.locked ?? true,
+        hidden: row.cellProtection.hidden ?? false
+      };
+    } else if (row.protected !== void 0) {
+      mainCell.protection = {
+        locked: row.protected,
+        hidden: false
+      };
+    }
     this.applyCellDimensions(ws, rowPointer, mainColPosition, row);
+    if (row.comment) {
+      this.applyCellComment(ws, rowPointer, mainColPosition, row.comment);
+    }
+    if (row.validation) {
+      this.applyDataValidation(ws, rowPointer, mainColPosition, row.validation);
+    }
+    if (row.styles?.conditionalFormats) {
+      this.applyConditionalFormatting(ws, rowPointer, mainColPosition, row.styles.conditionalFormats);
+    }
     if (row.children && row.children.length > 0) {
       for (const child of row.children) {
         if (child) {
@@ -809,6 +1308,15 @@ class Worksheet {
               childCell.numFmt = child.numberFormat;
             }
             this.applyCellDimensions(ws, rowPointer, colPosition, child);
+            if (child.comment) {
+              this.applyCellComment(ws, rowPointer, colPosition, child.comment);
+            }
+            if (child.validation) {
+              this.applyDataValidation(ws, rowPointer, colPosition, child.validation);
+            }
+            if (child.styles?.conditionalFormats) {
+              this.applyConditionalFormatting(ws, rowPointer, colPosition, child.styles.conditionalFormats);
+            }
           }
         }
       }
@@ -947,6 +1455,473 @@ class Worksheet {
     }
     return converted;
   }
+  /**
+   * Convierte un número de columna a letra (1 = A, 2 = B, etc.)
+   */
+  numberToColumnLetter(columnNumber) {
+    let result = "";
+    while (columnNumber > 0) {
+      columnNumber--;
+      result = String.fromCharCode(65 + columnNumber % 26) + result;
+      columnNumber = Math.floor(columnNumber / 26);
+    }
+    return result;
+  }
+  /**
+   * Convierte letra de columna a número (A = 1, B = 2, etc.)
+   */
+  columnLetterToNumber(columnLetter) {
+    let result = 0;
+    for (let i = 0; i < columnLetter.length; i++) {
+      result = result * 26 + (columnLetter.charCodeAt(i) - 64);
+    }
+    return result;
+  }
+  /**
+   * Aplica una imagen al worksheet
+   */
+  async applyImage(ws, image) {
+    try {
+      let row;
+      let col;
+      if (typeof image.position.row === "string") {
+        const match = image.position.row.match(/([A-Z]+)(\d+)/);
+        if (match && match[1] && match[2]) {
+          col = this.columnLetterToNumber(match[1]);
+          row = parseInt(match[2], 10);
+        } else {
+          row = parseInt(image.position.row, 10) || 1;
+          col = typeof image.position.col === "string" ? this.columnLetterToNumber(image.position.col) : typeof image.position.col === "number" ? image.position.col : 1;
+        }
+      } else {
+        row = image.position.row;
+        col = typeof image.position.col === "string" ? this.columnLetterToNumber(image.position.col) : typeof image.position.col === "number" ? image.position.col : 1;
+      }
+      let imageBuffer;
+      if (typeof image.buffer === "string") {
+        let base64Data;
+        if (image.buffer.startsWith("data:")) {
+          const parts = image.buffer.split(",");
+          base64Data = parts[1] || image.buffer;
+        } else {
+          base64Data = image.buffer;
+        }
+        const binaryString = atob(base64Data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        imageBuffer = bytes;
+      } else if (image.buffer instanceof ArrayBuffer) {
+        imageBuffer = new Uint8Array(image.buffer);
+      } else {
+        imageBuffer = image.buffer;
+      }
+      const imagePosition = {
+        tl: { col: col - 1, row: row - 1 }
+      };
+      if (image.size) {
+        if (image.size.width && image.size.height) {
+          imagePosition.ext = {
+            width: image.size.width,
+            height: image.size.height
+          };
+        } else if (image.size.scaleX && image.size.scaleY) {
+          imagePosition.ext = {
+            width: 100 * (image.size.scaleX || 1),
+            height: 100 * (image.size.scaleY || 1)
+          };
+        }
+      }
+      ws.addImage({
+        buffer: imageBuffer,
+        extension: image.extension
+      }, imagePosition);
+      if (image.hyperlink) {
+        const cell = ws.getRow(row).getCell(col);
+        cell.value = {
+          text: image.description || "",
+          hyperlink: image.hyperlink
+        };
+      }
+    } catch (error) {
+      console.warn("Error adding image to worksheet:", error);
+    }
+  }
+  /**
+   * Aplica agrupación de filas
+   */
+  applyRowGrouping(ws, startRow, endRow, collapsed = false) {
+    for (let row = startRow; row <= endRow; row++) {
+      const excelRow = ws.getRow(row);
+      if (!excelRow.outlineLevel) {
+        excelRow.outlineLevel = 1;
+      }
+      if (collapsed && row === startRow) {
+        try {
+          excelRow.collapsed = true;
+        } catch {
+        }
+      }
+    }
+  }
+  /**
+   * Aplica agrupación de columnas
+   */
+  applyColumnGrouping(ws, startCol, endCol, collapsed = false) {
+    for (let col = startCol; col <= endCol; col++) {
+      const excelCol = ws.getColumn(col);
+      if (!excelCol.outlineLevel) {
+        excelCol.outlineLevel = 1;
+      }
+      if (collapsed && col === startCol) {
+        try {
+          excelCol.collapsed = true;
+        } catch {
+        }
+      }
+    }
+  }
+  /**
+   * Aplica una tabla estructurada de Excel
+   */
+  applyExcelTable(ws, table) {
+    try {
+      const range = `${table.range.start}:${table.range.end}`;
+      const tableConfig = {
+        name: table.name,
+        ref: range,
+        headerRow: table.headerRow !== false,
+        totalsRow: table.totalRow === true
+      };
+      if (table.style) {
+        tableConfig.style = {
+          theme: table.style,
+          showFirstColumn: false,
+          showLastColumn: false,
+          showRowStripes: true,
+          showColumnStripes: false
+        };
+      }
+      if (table.columns && table.columns.length > 0) {
+        tableConfig.columns = table.columns.map((col) => ({
+          name: col.name,
+          filterButton: col.filterButton !== false,
+          totalsRowFunction: col.totalsRowFunction || "none",
+          totalsRowFormula: col.totalsRowFormula
+        }));
+      }
+      ws.addTable(tableConfig);
+    } catch (error) {
+      console.warn("Error adding Excel table:", error);
+    }
+  }
+  /**
+   * Aplica configuración avanzada de impresión
+   */
+  applyAdvancedPrintSettings(ws) {
+    if (this.config.printHeadersFooters) {
+      const headerFooter = {};
+      if (this.config.printHeadersFooters.header) {
+        const left = this.config.printHeadersFooters.header.left || "";
+        const center = this.config.printHeadersFooters.header.center || "";
+        const right = this.config.printHeadersFooters.header.right || "";
+        headerFooter.oddHeader = `${left}&C${center}&R${right}`;
+      }
+      if (this.config.printHeadersFooters.footer) {
+        const left = this.config.printHeadersFooters.footer.left || "";
+        const center = this.config.printHeadersFooters.footer.center || "";
+        const right = this.config.printHeadersFooters.footer.right || "";
+        headerFooter.oddFooter = `${left}&C${center}&R${right}`;
+      }
+      if (Object.keys(headerFooter).length > 0) {
+        ws.headerFooter = headerFooter;
+      }
+    }
+    if (this.config.printRepeat) {
+      if (this.config.printRepeat.rows) {
+        if (Array.isArray(this.config.printRepeat.rows)) {
+          const rowsStr = this.config.printRepeat.rows.map((r) => r.toString()).join(":");
+          ws.pageSetup.printTitlesRow = `$${rowsStr}`;
+        } else {
+          ws.pageSetup.printTitlesRow = `$${this.config.printRepeat.rows}`;
+        }
+      }
+      if (this.config.printRepeat.columns) {
+        if (Array.isArray(this.config.printRepeat.columns)) {
+          const colsStr = this.config.printRepeat.columns.map((c) => typeof c === "number" ? this.numberToColumnLetter(c) : c).join(":");
+          ws.pageSetup.printTitlesColumn = `$${colsStr}`;
+        } else {
+          ws.pageSetup.printTitlesColumn = `$${this.config.printRepeat.columns}`;
+        }
+      }
+    }
+  }
+  /**
+   * Aplica filas y columnas ocultas
+   */
+  applyHiddenRowsColumns(ws) {
+    for (const rowNum of this.hiddenRows) {
+      const row = ws.getRow(rowNum);
+      row.hidden = true;
+    }
+    for (const colNum of this.hiddenColumns) {
+      const column = ws.getColumn(colNum);
+      column.hidden = true;
+    }
+  }
+  /**
+   * Aplica una tabla dinámica (pivot table)
+   */
+  async applyPivotTable(ws, pivotTable) {
+    try {
+      if (pivotTable.sourceSheet) {
+        const workbook = ws.workbook;
+        const sourceSheet = workbook.getWorksheet(pivotTable.sourceSheet);
+        if (!sourceSheet) {
+          console.warn(`Source sheet "${pivotTable.sourceSheet}" not found for pivot table "${pivotTable.name}"`);
+          return;
+        }
+      }
+      const pivotConfig = {
+        name: pivotTable.name,
+        ref: pivotTable.ref,
+        sourceRange: pivotTable.sourceRange,
+        fields: {}
+      };
+      if (pivotTable.fields.rows && pivotTable.fields.rows.length > 0) {
+        pivotConfig.fields.rows = pivotTable.fields.rows;
+      }
+      if (pivotTable.fields.columns && pivotTable.fields.columns.length > 0) {
+        pivotConfig.fields.columns = pivotTable.fields.columns;
+      }
+      if (pivotTable.fields.values && pivotTable.fields.values.length > 0) {
+        pivotConfig.fields.values = pivotTable.fields.values.map((v) => ({
+          name: v.name,
+          stat: v.stat
+        }));
+      }
+      if (pivotTable.fields.filters && pivotTable.fields.filters.length > 0) {
+        pivotConfig.fields.filters = pivotTable.fields.filters;
+      }
+      if (pivotTable.options) {
+        pivotConfig.options = pivotTable.options;
+      }
+      if (ws.addPivotTable) {
+        ws.addPivotTable(pivotConfig);
+      } else {
+        console.warn("Pivot tables require ExcelJS 4.5.0+. Feature may not be fully supported.");
+      }
+    } catch (error) {
+      console.warn("Error adding pivot table:", error);
+    }
+  }
+  /**
+   * Convierte un color a formato ExcelJS
+   */
+  convertColorToExcelJS(color) {
+    if (typeof color === "string") {
+      if (color.startsWith("#")) {
+        const hex = color.substring(1);
+        return { argb: `FF${hex.toUpperCase()}` };
+      }
+      return { argb: "FF000000" };
+    } else if ("r" in color && "g" in color && "b" in color) {
+      const hex = [color.r, color.g, color.b].map((x) => {
+        const hex2 = x.toString(16);
+        return hex2.length === 1 ? "0" + hex2 : hex2;
+      }).join("").toUpperCase();
+      return { argb: `FF${hex}` };
+    } else if ("theme" in color) {
+      return { theme: color.theme };
+    }
+    return { argb: "FF000000" };
+  }
+  /**
+   * Aplica views (freeze panes, split panes, sheet views)
+   */
+  applyViews(ws) {
+    const views = [];
+    if (this.config.freezePanes) {
+      const freezeView = {
+        state: "frozen",
+        xSplit: this.config.freezePanes.col - 1,
+        ySplit: this.config.freezePanes.row - 1,
+        topLeftCell: this.config.freezePanes.reference || this.numberToColumnLetter(this.config.freezePanes.col) + String(this.config.freezePanes.row),
+        activeCell: this.config.freezePanes.reference || this.numberToColumnLetter(this.config.freezePanes.col) + String(this.config.freezePanes.row)
+      };
+      views.push(freezeView);
+    } else if (this.config.splitPanes) {
+      const splitConfig = this.config.splitPanes;
+      const splitView = {
+        state: "split",
+        xSplit: splitConfig.xSplit || 0,
+        ySplit: splitConfig.ySplit || 0
+      };
+      if (splitConfig.topLeftCell) {
+        splitView.topLeftCell = splitConfig.topLeftCell;
+      }
+      if (splitConfig.activePane) {
+        const paneMap = {
+          "topLeft": "topLeft",
+          "topRight": "topRight",
+          "bottomLeft": "bottomLeft",
+          "bottomRight": "bottomRight"
+        };
+        splitView.activePane = paneMap[splitConfig.activePane] || "topLeft";
+      }
+      views.push(splitView);
+    } else if (this.config.views) {
+      const viewConfig = this.config.views;
+      const view = {
+        state: viewConfig.state === "pageBreakPreview" || viewConfig.state === "pageLayout" ? "normal" : viewConfig.state || "normal"
+      };
+      if (viewConfig.zoomScale !== void 0) {
+        view.zoomScale = viewConfig.zoomScale;
+      }
+      if (viewConfig.zoomScaleNormal !== void 0) {
+        view.zoomScaleNormal = viewConfig.zoomScaleNormal;
+      }
+      if (viewConfig.showGridLines !== void 0) {
+        view.showGridLines = viewConfig.showGridLines;
+      }
+      if (viewConfig.showRowColHeaders !== void 0) {
+        view.showRowColHeaders = viewConfig.showRowColHeaders;
+      }
+      if (viewConfig.showRuler !== void 0) {
+        view.showRuler = viewConfig.showRuler;
+      }
+      if (viewConfig.rightToLeft !== void 0) {
+        view.rightToLeft = viewConfig.rightToLeft;
+      }
+      views.push(view);
+    } else if (this.config.zoom) {
+      views.push({
+        state: "normal",
+        zoomScale: this.config.zoom
+      });
+    }
+    if (views.length > 0) {
+      ws.views = views;
+    }
+  }
+  /**
+   * Obtiene un estilo predefinido del workbook
+   */
+  getPredefinedStyle(styleName) {
+    if (this.customStyles && this.customStyles[styleName]) {
+      return this.customStyles[styleName];
+    }
+    return void 0;
+  }
+  /**
+   * Obtiene un estilo del tema para una sección específica
+   */
+  getThemeStyle(section, rowIndex) {
+    if (!this.theme || this.theme.autoApplySectionStyles === false) {
+      return void 0;
+    }
+    if (!this.customStyles) {
+      return void 0;
+    }
+    let styleName = "";
+    if (section === "header") {
+      styleName = "__theme_header";
+    } else if (section === "subHeader") {
+      styleName = "__theme_subHeader";
+    } else if (section === "body") {
+      if (rowIndex !== void 0 && rowIndex % 2 === 1 && this.customStyles["__theme_body_alt"]) {
+        styleName = "__theme_body_alt";
+      } else {
+        styleName = "__theme_body";
+      }
+    } else if (section === "footer") {
+      styleName = "__theme_footer";
+    }
+    return this.customStyles[styleName];
+  }
+  /**
+   * Aplica un slicer a una tabla o tabla dinámica
+   */
+  async applySlicer(ws, slicer) {
+    try {
+      console.warn("Slicers require advanced ExcelJS XML manipulation. Feature documented but not fully implemented.");
+      const colNum = typeof slicer.position.col === "string" ? this.columnLetterToNumber(slicer.position.col) : slicer.position.col;
+      const cell = ws.getRow(slicer.position.row).getCell(colNum);
+      cell.note = `Slicer: ${slicer.name} for table "${slicer.targetTable}" on column "${slicer.column}"`;
+    } catch (error) {
+      console.warn("Error adding slicer:", error);
+    }
+  }
+  /**
+   * Aplica una marca de agua al worksheet
+   */
+  async applyWatermark(ws, watermark) {
+    try {
+      if (watermark.image) {
+        const imageConfig = {
+          ...watermark.image,
+          position: watermark.position ? {
+            row: watermark.position.vertical === "top" ? 1 : watermark.position.vertical === "bottom" ? 1e3 : 500,
+            col: watermark.position.horizontal === "left" ? 1 : watermark.position.horizontal === "right" ? 20 : 10
+          } : { row: 500, col: 10 },
+          size: watermark.image.size || {
+            width: 400,
+            height: 300,
+            scaleX: watermark.opacity || 0.3,
+            scaleY: watermark.opacity || 0.3
+          }
+        };
+        await this.applyImage(ws, imageConfig);
+      } else if (watermark.text) {
+        const centerRow = Math.floor((ws.rowCount || 100) / 2);
+        const centerCol = Math.floor((ws.columnCount || 20) / 2);
+        const cell = ws.getRow(centerRow).getCell(centerCol);
+        cell.value = watermark.text;
+        cell.style = {
+          font: {
+            size: watermark.fontSize || 72,
+            color: { argb: this.convertColorToExcelJS(watermark.fontColor || "#CCCCCC").argb },
+            italic: true
+          },
+          alignment: {
+            horizontal: "center",
+            vertical: "middle"
+          }
+        };
+      }
+    } catch (error) {
+      console.warn("Error adding watermark:", error);
+    }
+  }
+  /**
+   * Aplica una conexión de datos
+   */
+  async applyDataConnection(workbook, connection) {
+    try {
+      console.warn("Data connections require advanced ExcelJS XML manipulation. Feature documented but not fully implemented.");
+      if (!workbook.model) {
+        workbook.model = {};
+      }
+      if (!workbook.model.dataConnections) {
+        workbook.model.dataConnections = [];
+      }
+      workbook.model.dataConnections.push({
+        name: connection.name,
+        type: connection.type,
+        connectionString: connection.connectionString,
+        commandText: connection.commandText,
+        refresh: connection.refresh,
+        credentials: connection.credentials ? {
+          username: connection.credentials.username,
+          integratedSecurity: connection.credentials.integratedSecurity
+          // No guardar password por seguridad
+        } : void 0
+      });
+    } catch (error) {
+      console.warn("Error adding data connection:", error);
+    }
+  }
 }
 var BuilderEventType = /* @__PURE__ */ ((BuilderEventType2) => {
   BuilderEventType2["WORKSHEET_ADDED"] = "worksheetAdded";
@@ -969,6 +1944,35 @@ class ExcelBuilder {
   isBuilding = false;
   stats;
   eventEmitter;
+  cellStyles = /* @__PURE__ */ new Map();
+  theme;
+  /**
+   * Creates a new ExcelBuilder instance
+   * 
+   * @param {IExcelBuilderConfig} config - Configuration options for the builder
+   * @param {IWorkbookMetadata} [config.metadata] - Workbook metadata (title, author, description, etc.)
+   * @param {Partial<IWorksheetConfig>} [config.defaultWorksheetConfig] - Default configuration for all worksheets
+   * @param {boolean} [config.enableValidation=true] - Enable data validation
+   * @param {boolean} [config.enableEvents=true] - Enable event system
+   * @param {boolean} [config.enablePerformanceMonitoring=false] - Enable performance monitoring
+   * @param {number} [config.maxWorksheets=255] - Maximum number of worksheets allowed
+   * @param {number} [config.maxRowsPerWorksheet=1048576] - Maximum rows per worksheet
+   * @param {number} [config.maxColumnsPerWorksheet=16384] - Maximum columns per worksheet
+   * @param {number} [config.memoryLimit=104857600] - Memory limit in bytes (100MB default)
+   * 
+   * @example
+   * ```typescript
+   * const builder = new ExcelBuilder({
+   *   metadata: {
+   *     title: 'Annual Report',
+   *     author: 'John Doe',
+   *     description: 'Company annual report for 2024'
+   *   },
+   *   enableValidation: true,
+   *   enableEvents: true
+   * });
+   * ```
+   */
   constructor(config = {}) {
     this.config = {
       enableValidation: true,
@@ -986,6 +1990,41 @@ class ExcelBuilder {
   }
   /**
    * Add a new worksheet to the workbook
+   * 
+   * Creates a new worksheet with the specified name and configuration. The worksheet
+   * becomes the current worksheet automatically. If a worksheet with the same name
+   * already exists, an error is thrown.
+   * 
+   * @param {string} name - Unique name for the worksheet (required, must be unique)
+   * @param {Partial<IWorksheetConfig>} [worksheetConfig={}] - Configuration for the worksheet
+   * @param {string} [worksheetConfig.tabColor] - Tab color (hex format, e.g., '#FF0000')
+   * @param {number} [worksheetConfig.defaultRowHeight=20] - Default row height in points
+   * @param {number} [worksheetConfig.defaultColWidth=10] - Default column width in characters
+   * @param {boolean} [worksheetConfig.hidden=false] - Whether the worksheet is hidden
+   * @param {boolean} [worksheetConfig.protected=false] - Whether the worksheet is protected
+   * @param {string} [worksheetConfig.protectionPassword] - Password for worksheet protection
+   * @param {boolean} [worksheetConfig.showGridLines=true] - Show grid lines
+   * @param {boolean} [worksheetConfig.showRowColHeaders=true] - Show row and column headers
+   * @param {number} [worksheetConfig.zoom] - Zoom level (10-400)
+   * 
+   * @returns {IWorksheet} The newly created worksheet instance
+   * 
+   * @throws {Error} If a worksheet with the same name already exists
+   * 
+   * @example
+   * ```typescript
+   * // Simple worksheet
+   * const sheet1 = builder.addWorksheet('Sales');
+   * 
+   * // Worksheet with configuration
+   * const sheet2 = builder.addWorksheet('Summary', {
+   *   tabColor: '#4472C4',
+   *   defaultRowHeight: 25,
+   *   defaultColWidth: 15,
+   *   protected: true,
+   *   protectionPassword: 'mypassword'
+   * });
+   * ```
    */
   addWorksheet(name, worksheetConfig = {}) {
     if (this.worksheets.has(name)) {
@@ -1006,12 +2045,40 @@ class ExcelBuilder {
   }
   /**
    * Get a worksheet by name
+   * 
+   * Retrieves an existing worksheet from the workbook by its name.
+   * Returns undefined if the worksheet doesn't exist.
+   * 
+   * @param {string} name - Name of the worksheet to retrieve
+   * @returns {IWorksheet | undefined} The worksheet if found, undefined otherwise
+   * 
+   * @example
+   * ```typescript
+   * const worksheet = builder.getWorksheet('Sales');
+   * if (worksheet) {
+   *   worksheet.addRow([...]);
+   * }
+   * ```
    */
   getWorksheet(name) {
     return this.worksheets.get(name);
   }
   /**
    * Remove a worksheet by name
+   * 
+   * Removes a worksheet from the workbook. If the removed worksheet was the current
+   * worksheet, the current worksheet is cleared.
+   * 
+   * @param {string} name - Name of the worksheet to remove
+   * @returns {boolean} True if the worksheet was found and removed, false otherwise
+   * 
+   * @example
+   * ```typescript
+   * const removed = builder.removeWorksheet('OldSheet');
+   * if (removed) {
+   *   console.log('Worksheet removed successfully');
+   * }
+   * ```
    */
   removeWorksheet(name) {
     const worksheet = this.worksheets.get(name);
@@ -1027,6 +2094,21 @@ class ExcelBuilder {
   }
   /**
    * Set the current worksheet
+   * 
+   * Sets the active worksheet. Operations like addRow() will be performed on the
+   * current worksheet. When you add a new worksheet, it automatically becomes the current one.
+   * 
+   * @param {string} name - Name of the worksheet to set as current
+   * @returns {boolean} True if the worksheet was found and set, false otherwise
+   * 
+   * @example
+   * ```typescript
+   * builder.addWorksheet('Sheet1');
+   * builder.addWorksheet('Sheet2');
+   * 
+   * // Switch back to Sheet1
+   * builder.setCurrentWorksheet('Sheet1');
+   * ```
    */
   setCurrentWorksheet(name) {
     const worksheet = this.worksheets.get(name);
@@ -1038,6 +2120,43 @@ class ExcelBuilder {
   }
   /**
    * Build the workbook and return as ArrayBuffer
+   * 
+   * Compiles all worksheets, applies themes and styles, and generates the Excel file
+   * as an ArrayBuffer. This is the core method that all export methods use internally.
+   * 
+   * The build process:
+   * 1. Creates a new ExcelJS workbook
+   * 2. Applies workbook metadata
+   * 3. Applies theme (if set)
+   * 4. Adds predefined cell styles
+   * 5. Builds each worksheet
+   * 6. Writes to buffer with compression
+   * 
+   * @param {IBuildOptions} [options={}] - Build options
+   * @param {'xlsx' | 'xls' | 'csv'} [options.format='xlsx'] - Output format
+   * @param {boolean} [options.includeStyles=true] - Include cell styles
+   * @param {number} [options.compressionLevel=6] - Compression level (0-9, higher = more compression)
+   * @param {boolean} [options.optimizeForSpeed=false] - Optimize for speed over file size
+   * 
+   * @returns {Promise<Result<ArrayBuffer>>} Result containing the Excel file as ArrayBuffer
+   * 
+   * @throws {Error} If build is already in progress (prevents concurrent builds)
+   * 
+   * @example
+   * ```typescript
+   * // Basic build
+   * const result = await builder.build();
+   * if (result.success) {
+   *   const buffer = result.data;
+   *   // Use buffer...
+   * }
+   * 
+   * // Build with options
+   * const result = await builder.build({
+   *   compressionLevel: 9, // Maximum compression
+   *   optimizeForSpeed: true
+   * });
+   * ```
    */
   async build(options = {}) {
     if (this.isBuilding) {
@@ -1070,6 +2189,12 @@ class ExcelBuilder {
           workbook.category = this.config.metadata.category;
         if (this.config.metadata.description)
           workbook.description = this.config.metadata.description;
+      }
+      if (this.theme) {
+        this.applyTheme(workbook, this.theme);
+      }
+      for (const [name, style] of this.cellStyles.entries()) {
+        this.addStyleToWorkbook(workbook, name, style);
       }
       for (const worksheet of this.worksheets.values()) {
         await worksheet.build(workbook, options);
@@ -1105,7 +2230,38 @@ class ExcelBuilder {
     }
   }
   /**
-   * Generate and download the file
+   * Generate and download the file (Browser only)
+   * 
+   * Builds the Excel file and automatically triggers a download in the user's browser.
+   * This is the simplest method for browser environments - just one method call!
+   * 
+   * **Note**: This method is designed for browser environments. For Node.js, use `saveToFile()` instead.
+   * 
+   * @param {string} fileName - Name of the file to download (e.g., 'report.xlsx')
+   * @param {IDownloadOptions} [options={}] - Download options
+   * @param {string} [options.mimeType] - MIME type (default: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+   * @param {number} [options.compressionLevel=6] - Compression level (0-9)
+   * @param {boolean} [options.includeStyles=true] - Include cell styles
+   * 
+   * @returns {Promise<Result<void>>} Result indicating success or failure
+   * 
+   * @example
+   * ```typescript
+   * // Simple download
+   * const result = await builder.generateAndDownload('sales-report.xlsx');
+   * 
+   * if (result.success) {
+   *   console.log('File downloaded successfully!');
+   * } else {
+   *   console.error('Download failed:', result.error);
+   * }
+   * 
+   * // With options
+   * await builder.generateAndDownload('report.xlsx', {
+   *   compressionLevel: 9,
+   *   mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+   * });
+   * ```
    */
   async generateAndDownload(fileName, options = {}) {
     const buildResult = await this.build(options);
@@ -1134,13 +2290,255 @@ class ExcelBuilder {
     }
   }
   /**
-   * Get workbook as buffer
+   * Save file to disk (Node.js only)
+   * 
+   * Builds the Excel file and saves it directly to the file system. This is the Node.js
+   * equivalent of `generateAndDownload()` - just as simple! Automatically creates parent
+   * directories if they don't exist.
+   * 
+   * **Note**: This method only works in Node.js environments. For browsers, use `generateAndDownload()`.
+   * 
+   * @param {string} filePath - Full path where to save the file (e.g., './output/report.xlsx')
+   * @param {ISaveFileOptions} [options={}] - Save options
+   * @param {boolean} [options.createDir=true] - Create parent directories if they don't exist
+   * @param {string} [options.encoding='binary'] - File encoding ('binary', 'base64', etc.)
+   * @param {number} [options.compressionLevel=6] - Compression level (0-9)
+   * @param {boolean} [options.includeStyles=true] - Include cell styles
+   * 
+   * @returns {Promise<Result<void>>} Result indicating success or failure
+   * 
+   * @throws {Error} If called in browser environment (use `generateAndDownload()` instead)
+   * @throws {Error} If Node.js modules (fs, path, buffer) are not available
+   * 
+   * @example
+   * ```typescript
+   * // Simple save - creates directories automatically
+   * const result = await builder.saveToFile('./output/report.xlsx');
+   * 
+   * if (result.success) {
+   *   console.log('File saved successfully!');
+   * }
+   * 
+   * // With options
+   * await builder.saveToFile('./reports/sales.xlsx', {
+   *   createDir: true,  // Create ./reports/ if it doesn't exist
+   *   encoding: 'binary',
+   *   compressionLevel: 9
+   * });
+   * ```
+   */
+  async saveToFile(filePath, options = {}) {
+    const buildResult = await this.build(options);
+    if (!buildResult.success) {
+      return buildResult;
+    }
+    try {
+      if (typeof window !== "undefined") {
+        const errorResult = {
+          success: false,
+          error: {
+            type: ErrorType.BUILD_ERROR,
+            message: "saveToFile() is only available in Node.js. Use generateAndDownload() in the browser.",
+            stack: ""
+          }
+        };
+        return errorResult;
+      }
+      this.emitEvent(BuilderEventType.DOWNLOAD_STARTED, { fileName: filePath });
+      const nodeModules = await (async () => {
+        try {
+          const fs = await import("./__vite-browser-external-d06ac358.js");
+          const path = await import("./__vite-browser-external-d06ac358.js");
+          const buffer2 = await import("./index-8081eac4.js").then((n) => n.i);
+          return { fs, path, Buffer: buffer2.Buffer };
+        } catch {
+          throw new Error("Node.js modules not available. saveToFile() requires Node.js environment.");
+        }
+      })();
+      if (options.createDir !== false) {
+        const dir = nodeModules.path.dirname(filePath);
+        try {
+          await nodeModules.fs.mkdir(dir, { recursive: true });
+        } catch (error) {
+          if (error?.code !== "EEXIST") {
+            throw error;
+          }
+        }
+      }
+      const buffer = nodeModules.Buffer.from(buildResult.data);
+      await nodeModules.fs.writeFile(filePath, buffer, { encoding: options.encoding || "binary" });
+      this.emitEvent(BuilderEventType.DOWNLOAD_COMPLETED, { fileName: filePath });
+      return { success: true, data: void 0 };
+    } catch (error) {
+      const errorResult = {
+        success: false,
+        error: {
+          type: ErrorType.BUILD_ERROR,
+          message: error instanceof Error ? error.message : "Failed to save file",
+          stack: error instanceof Error ? error.stack || "" : ""
+        }
+      };
+      this.emitEvent(BuilderEventType.DOWNLOAD_ERROR, { error: errorResult.error });
+      return errorResult;
+    }
+  }
+  /**
+   * Save to stream (Node.js only) - For large files
+   * 
+   * Builds the Excel file and writes it directly to a writable stream. This is ideal
+   * for very large files or when you need to stream the data (e.g., HTTP responses,
+   * file uploads, etc.).
+   * 
+   * **Note**: This method only works in Node.js environments.
+   * 
+   * @param {NodeJS.WritableStream} writeStream - Writable stream to write the file to
+   * @param {IBuildOptions} [options={}] - Build options
+   * @param {number} [options.compressionLevel=6] - Compression level (0-9)
+   * @param {boolean} [options.includeStyles=true] - Include cell styles
+   * 
+   * @returns {Promise<Result<void>>} Result indicating success or failure
+   * 
+   * @throws {Error} If called in browser environment
+   * 
+   * @example
+   * ```typescript
+   * import fs from 'fs';
+   * 
+   * // Save to file stream
+   * const writeStream = fs.createWriteStream('./output/report.xlsx');
+   * const result = await builder.saveToStream(writeStream);
+   * 
+   * if (result.success) {
+   *   writeStream.end();
+   *   console.log('File streamed successfully!');
+   * }
+   * 
+   * // HTTP response stream
+   * app.get('/download', async (req, res) => {
+   *   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+   *   await builder.saveToStream(res);
+   * });
+   * ```
+   */
+  async saveToStream(writeStream, options = {}) {
+    const buildResult = await this.build(options);
+    if (!buildResult.success) {
+      return buildResult;
+    }
+    try {
+      if (typeof window !== "undefined") {
+        const errorResult = {
+          success: false,
+          error: {
+            type: ErrorType.BUILD_ERROR,
+            message: "saveToStream() is only available in Node.js.",
+            stack: ""
+          }
+        };
+        return errorResult;
+      }
+      this.emitEvent(BuilderEventType.DOWNLOAD_STARTED, { fileName: "stream" });
+      const bufferModule = await import("./index-8081eac4.js").then((n) => n.i);
+      const buffer = bufferModule.Buffer.from(buildResult.data);
+      return new Promise((resolve) => {
+        writeStream.write(buffer, (error) => {
+          if (error) {
+            const errorResult = {
+              success: false,
+              error: {
+                type: ErrorType.BUILD_ERROR,
+                message: error.message || "Failed to write to stream",
+                stack: error.stack || ""
+              }
+            };
+            this.emitEvent(BuilderEventType.DOWNLOAD_ERROR, { error: errorResult.error });
+            resolve(errorResult);
+          } else {
+            this.emitEvent(BuilderEventType.DOWNLOAD_COMPLETED, { fileName: "stream" });
+            resolve({ success: true, data: void 0 });
+          }
+        });
+      });
+    } catch (error) {
+      const errorResult = {
+        success: false,
+        error: {
+          type: ErrorType.BUILD_ERROR,
+          message: error instanceof Error ? error.message : "Failed to save to stream",
+          stack: error instanceof Error ? error.stack || "" : ""
+        }
+      };
+      this.emitEvent(BuilderEventType.DOWNLOAD_ERROR, { error: errorResult.error });
+      return errorResult;
+    }
+  }
+  /**
+   * Get workbook as ArrayBuffer
+   * 
+   * Builds the Excel file and returns it as an ArrayBuffer. This is useful when you need
+   * the raw binary data for custom handling (e.g., sending via WebSocket, processing with
+   * other libraries, manual file operations, etc.).
+   * 
+   * Works in both browser and Node.js environments.
+   * 
+   * @param {IBuildOptions} [options={}] - Build options
+   * @param {number} [options.compressionLevel=6] - Compression level (0-9)
+   * @param {boolean} [options.includeStyles=true] - Include cell styles
+   * 
+   * @returns {Promise<Result<ArrayBuffer>>} Result containing the Excel file as ArrayBuffer
+   * 
+   * @example
+   * ```typescript
+   * // Browser: Get buffer for custom handling
+   * const result = await builder.toBuffer();
+   * if (result.success) {
+   *   const buffer = result.data;
+   *   // Upload to server, send via WebSocket, etc.
+   * }
+   * 
+   * // Node.js: Get buffer for manual file write
+   * const result = await builder.toBuffer();
+   * if (result.success) {
+   *   const fs = await import('fs/promises');
+   *   await fs.writeFile('./report.xlsx', Buffer.from(result.data));
+   * }
+   * ```
    */
   async toBuffer(options = {}) {
     return this.build(options);
   }
   /**
-   * Get workbook as blob
+   * Get workbook as Blob
+   * 
+   * Builds the Excel file and returns it as a Blob object. This is useful in browser
+   * environments when you need to upload to a server, create object URLs for preview,
+   * or handle the file programmatically without triggering an automatic download.
+   * 
+   * **Note**: Blob is a browser API. In Node.js, use `toBuffer()` instead.
+   * 
+   * @param {IBuildOptions} [options={}] - Build options
+   * @param {number} [options.compressionLevel=6] - Compression level (0-9)
+   * @param {boolean} [options.includeStyles=true] - Include cell styles
+   * 
+   * @returns {Promise<Result<Blob>>} Result containing the Excel file as Blob
+   * 
+   * @example
+   * ```typescript
+   * // Get as Blob for upload
+   * const result = await builder.toBlob();
+   * if (result.success) {
+   *   const blob = result.data;
+   *   
+   *   // Upload to server
+   *   const formData = new FormData();
+   *   formData.append('file', blob, 'report.xlsx');
+   *   await fetch('/api/upload', { method: 'POST', body: formData });
+   *   
+   *   // Or create preview URL
+   *   const url = URL.createObjectURL(blob);
+   *   window.open(url);
+   * }
+   * ```
    */
   async toBlob(options = {}) {
     const buildResult = await this.build(options);
@@ -1154,6 +2552,25 @@ class ExcelBuilder {
   }
   /**
    * Validate the workbook
+   * 
+   * Performs validation checks on the workbook to ensure it's ready for building.
+   * Validates that worksheets exist and each worksheet is valid.
+   * 
+   * @returns {Result<boolean>} Result indicating if the workbook is valid
+   * - `success: true` - Workbook is valid and ready to build
+   * - `success: false` - Validation errors found (check `error.message` for details)
+   * 
+   * @example
+   * ```typescript
+   * const validation = builder.validate();
+   * if (!validation.success) {
+   *   console.error('Validation errors:', validation.error?.message);
+   *   return;
+   * }
+   * 
+   * // Safe to build
+   * await builder.build();
+   * ```
    */
   validate() {
     const errors = [];
@@ -1179,27 +2596,252 @@ class ExcelBuilder {
     return { success: true, data: true };
   }
   /**
-   * Clear all worksheets
+   * Clear all worksheets and reset the builder
+   * 
+   * Removes all worksheets, clears predefined cell styles, resets the theme,
+   * and clears the current worksheet. This effectively resets the builder to
+   * its initial state.
+   * 
+   * @returns {void}
+   * 
+   * @example
+   * ```typescript
+   * // Clear everything and start fresh
+   * builder.clear();
+   * 
+   * // Now add new worksheets
+   * builder.addWorksheet('NewSheet');
+   * ```
    */
   clear() {
     this.worksheets.clear();
     this.currentWorksheet = void 0;
+    this.cellStyles.clear();
+    this.theme = void 0;
   }
   /**
    * Get workbook statistics
+   * 
+   * Returns build statistics including build time, file size, number of worksheets,
+   * cells, styles used, and performance metrics. Statistics are updated after each build.
+   * 
+   * @returns {IBuildStats} Statistics object containing:
+   * - `totalWorksheets` - Number of worksheets
+   * - `totalCells` - Total number of cells
+   * - `memoryUsage` - Memory usage in bytes
+   * - `buildTime` - Last build time in milliseconds
+   * - `fileSize` - Last build file size in bytes
+   * - `stylesUsed` - Number of unique styles used
+   * - `formulasUsed` - Number of formulas
+   * - `conditionalFormatsUsed` - Number of conditional formats
+   * - `performance` - Performance breakdown by operation
+   * 
+   * @example
+   * ```typescript
+   * await builder.build();
+   * const stats = builder.getStats();
+   * 
+   * console.log(`Build time: ${stats.buildTime}ms`);
+   * console.log(`File size: ${stats.fileSize} bytes`);
+   * console.log(`Worksheets: ${stats.totalWorksheets}`);
+   * ```
    */
   getStats() {
     return { ...this.stats };
   }
   /**
-   * Event handling methods
+   * Add a predefined cell style
+   * 
+   * Defines a reusable cell style that can be referenced by name in cells using
+   * the `styleName` property. This is useful for maintaining consistent styling
+   * across the workbook and reducing code duplication.
+   * 
+   * Styles are stored at the workbook level and can be used in any worksheet.
+   * 
+   * @param {string} name - Unique name for the style (used to reference it later)
+   * @param {IStyle} style - Style object created with StyleBuilder
+   * @returns {this} Returns the builder instance for method chaining
+   * 
+   * @example
+   * ```typescript
+   * // Define reusable styles
+   * builder.addCellStyle('headerStyle', StyleBuilder.create()
+   *   .font({ name: 'Arial', size: 14, bold: true })
+   *   .fill({ backgroundColor: '#4472C4' })
+   *   .fontColor('#FFFFFF')
+   *   .build()
+   * );
+   * 
+   * // Use in cells
+   * worksheet.addHeader({
+   *   key: 'title',
+   *   value: 'Report',
+   *   type: CellType.STRING,
+   *   styleName: 'headerStyle' // Reference the predefined style
+   * });
+   * ```
+   */
+  addCellStyle(name, style) {
+    this.cellStyles.set(name, style);
+    return this;
+  }
+  /**
+   * Get a predefined cell style by name
+   * 
+   * Retrieves a previously defined cell style by its name. Returns undefined
+   * if the style doesn't exist.
+   * 
+   * @param {string} name - Name of the style to retrieve
+   * @returns {IStyle | undefined} The style if found, undefined otherwise
+   * 
+   * @example
+   * ```typescript
+   * const style = builder.getCellStyle('headerStyle');
+   * if (style) {
+   *   console.log('Style found:', style);
+   * }
+   * ```
+   */
+  getCellStyle(name) {
+    return this.cellStyles.get(name);
+  }
+  /**
+   * Set workbook theme
+   * 
+   * Applies a color and font theme to the entire workbook. Themes affect all
+   * worksheets and can automatically apply styles to table sections (header, body, footer)
+   * if `autoApplySectionStyles` is enabled.
+   * 
+   * Themes include:
+   * - Color palette (dark1, light1, dark2, light2, accent1-6, hyperlink colors)
+   * - Font families (major and minor fonts for latin, eastAsian, complexScript)
+   * - Optional section styles for automatic styling
+   * 
+   * @param {IWorkbookTheme} theme - Theme configuration object
+   * @param {string} [theme.name] - Theme name
+   * @param {object} [theme.colors] - Color palette
+   * @param {object} [theme.fonts] - Font configuration
+   * @param {object} [theme.sectionStyles] - Styles for table sections
+   * @param {boolean} [theme.autoApplySectionStyles=true] - Auto-apply section styles
+   * 
+   * @returns {this} Returns the builder instance for method chaining
+   * 
+   * @example
+   * ```typescript
+   * builder.setTheme({
+   *   name: 'Corporate Theme',
+   *   colors: {
+   *     dark1: '#000000',
+   *     light1: '#FFFFFF',
+   *     accent1: '#4472C4',
+   *     accent2: '#ED7D31'
+   *   },
+   *   fonts: {
+   *     major: { latin: 'Calibri' },
+   *     minor: { latin: 'Calibri' }
+   *   },
+   *   autoApplySectionStyles: true
+   * });
+   * ```
+   */
+  setTheme(theme) {
+    this.theme = theme;
+    return this;
+  }
+  /**
+   * Get current workbook theme
+   * 
+   * Retrieves the currently active theme, if one has been set.
+   * 
+   * @returns {IWorkbookTheme | undefined} The current theme, or undefined if no theme is set
+   * 
+   * @example
+   * ```typescript
+   * const theme = builder.getTheme();
+   * if (theme) {
+   *   console.log('Active theme:', theme.name);
+   * }
+   * ```
+   */
+  getTheme() {
+    return this.theme;
+  }
+  /**
+   * Register an event listener
+   * 
+   * Subscribes to builder events to monitor the build process. Returns a listener ID
+   * that can be used to remove the listener later.
+   * 
+   * Available events:
+   * - `build:started` - Build process started
+   * - `build:completed` - Build completed successfully
+   * - `build:error` - Build failed with error
+   * - `download:started` - File download/save started
+   * - `download:completed` - File download/save completed
+   * - `download:error` - File download/save failed
+   * - `worksheet:added` - New worksheet added
+   * - `worksheet:removed` - Worksheet removed
+   * 
+   * @param {BuilderEventType} eventType - Type of event to listen for
+   * @param {(event: IBuilderEvent) => void} listener - Callback function to execute when event fires
+   * @returns {string} Listener ID (use with `off()` to remove the listener)
+   * 
+   * @example
+   * ```typescript
+   * const listenerId = builder.on('build:started', (event) => {
+   *   console.log('Build started at', event.timestamp);
+   * });
+   * 
+   * builder.on('build:completed', (event) => {
+   *   console.log('Build completed:', event.data);
+   * });
+   * 
+   * builder.on('build:error', (event) => {
+   *   console.error('Build error:', event.data.error);
+   * });
+   * ```
    */
   on(eventType, listener) {
     return this.eventEmitter.on(eventType, listener);
   }
+  /**
+   * Remove an event listener
+   * 
+   * Unsubscribes from a specific event by removing the listener with the given ID.
+   * 
+   * @param {BuilderEventType} eventType - Type of event
+   * @param {string} listenerId - Listener ID returned from `on()`
+   * @returns {boolean} True if the listener was found and removed, false otherwise
+   * 
+   * @example
+   * ```typescript
+   * const listenerId = builder.on('build:started', handler);
+   * 
+   * // Later, remove the listener
+   * builder.off('build:started', listenerId);
+   * ```
+   */
   off(eventType, listenerId) {
     return this.eventEmitter.off(eventType, listenerId);
   }
+  /**
+   * Remove all event listeners
+   * 
+   * Removes all listeners for a specific event type, or all listeners for all events
+   * if no event type is specified.
+   * 
+   * @param {BuilderEventType} [eventType] - Event type to clear listeners for. If omitted, clears all listeners
+   * @returns {void}
+   * 
+   * @example
+   * ```typescript
+   * // Remove all listeners for 'build:started' event
+   * builder.removeAllListeners('build:started');
+   * 
+   * // Remove all listeners for all events
+   * builder.removeAllListeners();
+   * ```
+   */
   removeAllListeners(eventType) {
     if (eventType) {
       this.eventEmitter.offAll(eventType);
@@ -1210,6 +2852,10 @@ class ExcelBuilder {
   /**
    * Private methods
    */
+  /**
+   * Emit an event to all registered listeners
+   * @private
+   */
   emitEvent(type, data) {
     const event = {
       type,
@@ -1218,6 +2864,10 @@ class ExcelBuilder {
     };
     this.eventEmitter.emitSync(event);
   }
+  /**
+   * Initialize build statistics
+   * @private
+   */
   initializeStats() {
     return {
       totalWorksheets: 0,
@@ -1235,6 +2885,110 @@ class ExcelBuilder {
         writeTime: 0
       }
     };
+  }
+  /**
+   * Apply theme to workbook
+   * 
+   * Internal method that applies the theme configuration to the ExcelJS workbook.
+   * Converts theme colors and fonts to ExcelJS format.
+   * 
+   * @private
+   * @param {ExcelJS.Workbook} workbook - ExcelJS workbook instance
+   * @param {IWorkbookTheme} theme - Theme configuration
+   */
+  applyTheme(workbook, theme) {
+    if (!workbook.model) {
+      return;
+    }
+    const excelTheme = {
+      name: theme.name || "Custom Theme"
+    };
+    if (theme.colors) {
+      excelTheme.colors = {};
+      if (theme.colors.dark1)
+        excelTheme.colors.dark1 = this.convertColorToTheme(theme.colors.dark1);
+      if (theme.colors.light1)
+        excelTheme.colors.light1 = this.convertColorToTheme(theme.colors.light1);
+      if (theme.colors.dark2)
+        excelTheme.colors.dark2 = this.convertColorToTheme(theme.colors.dark2);
+      if (theme.colors.light2)
+        excelTheme.colors.light2 = this.convertColorToTheme(theme.colors.light2);
+      if (theme.colors.accent1)
+        excelTheme.colors.accent1 = this.convertColorToTheme(theme.colors.accent1);
+      if (theme.colors.accent2)
+        excelTheme.colors.accent2 = this.convertColorToTheme(theme.colors.accent2);
+      if (theme.colors.accent3)
+        excelTheme.colors.accent3 = this.convertColorToTheme(theme.colors.accent3);
+      if (theme.colors.accent4)
+        excelTheme.colors.accent4 = this.convertColorToTheme(theme.colors.accent4);
+      if (theme.colors.accent5)
+        excelTheme.colors.accent5 = this.convertColorToTheme(theme.colors.accent5);
+      if (theme.colors.accent6)
+        excelTheme.colors.accent6 = this.convertColorToTheme(theme.colors.accent6);
+      if (theme.colors.hyperlink)
+        excelTheme.colors.hyperlink = this.convertColorToTheme(theme.colors.hyperlink);
+      if (theme.colors.followedHyperlink)
+        excelTheme.colors.followedHyperlink = this.convertColorToTheme(theme.colors.followedHyperlink);
+    }
+    if (theme.fonts) {
+      excelTheme.fonts = {};
+      if (theme.fonts.major) {
+        excelTheme.fonts.major = {
+          latin: theme.fonts.major.latin || "Calibri",
+          eastAsian: theme.fonts.major.eastAsian || theme.fonts.major.latin || "Calibri",
+          complexScript: theme.fonts.major.complexScript || theme.fonts.major.latin || "Calibri"
+        };
+      }
+      if (theme.fonts.minor) {
+        excelTheme.fonts.minor = {
+          latin: theme.fonts.minor.latin || "Calibri",
+          eastAsian: theme.fonts.minor.eastAsian || theme.fonts.minor.latin || "Calibri",
+          complexScript: theme.fonts.minor.complexScript || theme.fonts.minor.latin || "Calibri"
+        };
+      }
+    }
+    workbook.model = workbook.model || {};
+    workbook.model.theme = excelTheme;
+  }
+  /**
+   * Convert color to theme format
+   * 
+   * Converts a Color value (hex string, RGB object, or theme color) to the format
+   * expected by ExcelJS themes (hex string without #).
+   * 
+   * @private
+   * @param {Color} color - Color to convert
+   * @returns {string} Hex color string without # prefix
+   */
+  convertColorToTheme(color) {
+    if (typeof color === "string") {
+      return color.startsWith("#") ? color.substring(1) : color;
+    }
+    if ("r" in color && "g" in color && "b" in color) {
+      return `${color.r.toString(16).padStart(2, "0")}${color.g.toString(16).padStart(2, "0")}${color.b.toString(16).padStart(2, "0")}`;
+    }
+    return "000000";
+  }
+  /**
+   * Add style to workbook
+   * 
+   * Stores a predefined style in the workbook so it can be accessed during worksheet
+   * building. ExcelJS doesn't support named styles directly, so we store them in a custom
+   * property that worksheets can access when building cells.
+   * 
+   * @private
+   * @param {ExcelJS.Workbook} workbook - ExcelJS workbook instance
+   * @param {string} name - Style name
+   * @param {IStyle} style - Style object
+   * 
+   * @remarks
+   * ExcelJS applies styles per cell, not as named styles. This method stores styles
+   * in a way that worksheets can retrieve them when building cells that reference
+   * the style by name.
+   */
+  addStyleToWorkbook(workbook, name, style) {
+    workbook.__customStyles = workbook.__customStyles || {};
+    workbook.__customStyles[name] = style;
   }
 }
 var OutputFormat = /* @__PURE__ */ ((OutputFormat2) => {
@@ -1573,6 +3327,19 @@ class ExcelReader {
     if (includeFormulas && cell.formula) {
       jsonCell.formula = cell.formula;
     }
+    if (cell.note) {
+      const note = cell.note;
+      if (typeof note === "string") {
+        jsonCell.comment = note;
+      } else if (note && typeof note === "object" && "texts" in note) {
+        const texts = note.texts;
+        if (Array.isArray(texts) && texts.length > 0) {
+          jsonCell.comment = texts.map((t) => t.text || "").join("");
+        }
+      } else if (note && typeof note === "object" && "text" in note) {
+        jsonCell.comment = String(note.text);
+      }
+    }
     return jsonCell;
   }
   /**
@@ -1644,6 +3411,19 @@ class ExcelReader {
           }
           if (cellValue.formula) {
             detailedCell.formula = cellValue.formula;
+          }
+          if (cell.note) {
+            const note = cell.note;
+            if (typeof note === "string") {
+              detailedCell.comment = note;
+            } else if (note && typeof note === "object" && "texts" in note) {
+              const texts = note.texts;
+              if (Array.isArray(texts) && texts.length > 0) {
+                detailedCell.comment = texts.map((t) => t.text || "").join("");
+              }
+            } else if (note && typeof note === "object" && "text" in note) {
+              detailedCell.comment = String(note.text);
+            }
           }
           cells.push(detailedCell);
         }

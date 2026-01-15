@@ -474,6 +474,23 @@ export class ExcelReader {
       jsonCell.formula = cell.formula;
     }
 
+    // Add comment if exists
+    if (cell.note) {
+      // ExcelJS stores comments as Note objects or strings
+      const note = cell.note;
+      if (typeof note === 'string') {
+        jsonCell.comment = note;
+      } else if (note && typeof note === 'object' && 'texts' in note) {
+        // Note object with texts array
+        const texts = (note as any).texts;
+        if (Array.isArray(texts) && texts.length > 0) {
+          jsonCell.comment = texts.map((t: any) => t.text || '').join('');
+        }
+      } else if (note && typeof note === 'object' && 'text' in note) {
+        jsonCell.comment = String((note as any).text);
+      }
+    }
+
     return jsonCell;
   }
 
@@ -563,6 +580,22 @@ export class ExcelReader {
           }
           if (cellValue.formula) {
             detailedCell.formula = cellValue.formula;
+          }
+
+          // Add comment if exists
+          if (cell.note) {
+            const note = cell.note;
+            if (typeof note === 'string') {
+              detailedCell.comment = note;
+            } else if (note && typeof note === 'object' && 'texts' in note) {
+              // Note object with texts array
+              const texts = (note as any).texts;
+              if (Array.isArray(texts) && texts.length > 0) {
+                detailedCell.comment = texts.map((t: any) => t.text || '').join('');
+              }
+            } else if (note && typeof note === 'object' && 'text' in note) {
+              detailedCell.comment = String((note as any).text);
+            }
           }
 
           cells.push(detailedCell);

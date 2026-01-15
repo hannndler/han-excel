@@ -2,7 +2,7 @@
  * Builder-specific type definitions
  */
 
-import { IWorkbookMetadata, Result } from './core.types';
+import { IWorkbookMetadata, Result, Color } from './core.types';
 import { IWorksheet, IWorksheetConfig } from './worksheet.types';
 import { IStyle } from './style.types';
 
@@ -82,6 +82,16 @@ export interface IDownloadOptions extends IBuildOptions {
 }
 
 /**
+ * Save file options interface (for Node.js)
+ */
+export interface ISaveFileOptions extends IBuildOptions {
+  /** Whether to create parent directories if they don't exist (default: true) */
+  createDir?: boolean;
+  /** File encoding (default: 'binary') */
+  encoding?: 'ascii' | 'utf8' | 'utf-8' | 'utf16le' | 'ucs2' | 'ucs-2' | 'base64' | 'latin1' | 'binary' | 'hex';
+}
+
+/**
  * Excel builder interface
  */
 export interface IExcelBuilder {
@@ -108,6 +118,10 @@ export interface IExcelBuilder {
   build(options?: IBuildOptions): Promise<Result<ArrayBuffer>>;
   /** Generate and download the file */
   generateAndDownload(fileName: string, options?: IDownloadOptions): Promise<Result<void>>;
+  /** Save file to disk (Node.js only) - Similar to generateAndDownload but for Node.js */
+  saveToFile(filePath: string, options?: ISaveFileOptions): Promise<Result<void>>;
+  /** Save to stream (Node.js only) - For large files */
+  saveToStream(writeStream: { write: (chunk: any, callback?: (error?: Error | null) => void) => boolean }, options?: IBuildOptions): Promise<Result<void>>;
   /** Get workbook as buffer */
   toBuffer(options?: IBuildOptions): Promise<Result<ArrayBuffer>>;
   /** Get workbook as blob */
@@ -118,6 +132,14 @@ export interface IExcelBuilder {
   clear(): void;
   /** Get workbook statistics */
   getStats(): IBuildStats;
+  /** Add a predefined cell style */
+  addCellStyle(name: string, style: IStyle): this;
+  /** Get a predefined cell style by name */
+  getCellStyle(name: string): IStyle | undefined;
+  /** Set workbook theme */
+  setTheme(theme: IWorkbookTheme): this;
+  /** Get current workbook theme */
+  getTheme(): IWorkbookTheme | undefined;
 }
 
 /**
@@ -198,4 +220,91 @@ export interface IBuilderValidationResult {
   warnings: string[];
   /** Worksheet validation results */
   worksheetResults: Map<string, boolean>;
+}
+
+/**
+ * Workbook theme configuration
+ */
+export interface IWorkbookTheme {
+  /** Theme name */
+  name?: string;
+  /** Color scheme */
+  colors?: {
+    /** Dark 1 color */
+    dark1?: Color;
+    /** Light 1 color */
+    light1?: Color;
+    /** Dark 2 color */
+    dark2?: Color;
+    /** Light 2 color */
+    light2?: Color;
+    /** Accent 1 color */
+    accent1?: Color;
+    /** Accent 2 color */
+    accent2?: Color;
+    /** Accent 3 color */
+    accent3?: Color;
+    /** Accent 4 color */
+    accent4?: Color;
+    /** Accent 5 color */
+    accent5?: Color;
+    /** Accent 6 color */
+    accent6?: Color;
+    /** Hyperlink color */
+    hyperlink?: Color;
+    /** Followed hyperlink color */
+    followedHyperlink?: Color;
+  };
+  /** Font scheme */
+  fonts?: {
+    /** Major font (headings) */
+    major?: {
+      latin?: string;
+      eastAsian?: string;
+      complexScript?: string;
+    };
+    /** Minor font (body) */
+    minor?: {
+      latin?: string;
+      eastAsian?: string;
+      complexScript?: string;
+    };
+  };
+  /** Section styles - automatically applied to headers, footers, body, etc. */
+  sectionStyles?: {
+    /** Style for main headers */
+    header?: {
+      backgroundColor?: Color;
+      fontColor?: Color;
+      fontSize?: number;
+      fontBold?: boolean;
+      borderColor?: Color;
+    };
+    /** Style for subheaders */
+    subHeader?: {
+      backgroundColor?: Color;
+      fontColor?: Color;
+      fontSize?: number;
+      fontBold?: boolean;
+      borderColor?: Color;
+    };
+    /** Style for body/data rows */
+    body?: {
+      backgroundColor?: Color;
+      fontColor?: Color;
+      fontSize?: number;
+      alternatingRowColor?: Color;
+      borderColor?: Color;
+    };
+    /** Style for footers */
+    footer?: {
+      backgroundColor?: Color;
+      fontColor?: Color;
+      fontSize?: number;
+      fontBold?: boolean;
+      borderColor?: Color;
+    };
+  };
+  /** Whether to automatically apply section styles (default: true) */
+  autoApplySectionStyles?: boolean;
 } 

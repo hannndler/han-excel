@@ -71,6 +71,8 @@ export interface IJsonCell {
   formattedValue?: string;
   /** Formula (if includeFormulas is true) */
   formula?: string;
+  /** Cell comment */
+  comment?: string;
 }
 
 /**
@@ -146,6 +148,8 @@ export interface IDetailedCell {
   formattedValue?: string;
   /** Formula (if includeFormulas is true) */
   formula?: string;
+  /** Cell comment */
+  comment?: string;
 }
 
 /**

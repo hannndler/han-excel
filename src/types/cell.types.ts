@@ -166,4 +166,26 @@ export interface ICellEvent {
   position: ICellPosition;
   timestamp: Date;
   data?: Record<string, unknown>;
+}
+
+/**
+ * Rich text run interface (for formatted text within a cell)
+ */
+export interface IRichTextRun {
+  /** Text content */
+  text: string;
+  /** Font name */
+  font?: string;
+  /** Font size */
+  size?: number;
+  /** Font color */
+  color?: string | { r: number; g: number; b: number } | { theme: number };
+  /** Bold */
+  bold?: boolean;
+  /** Italic */
+  italic?: boolean;
+  /** Underline */
+  underline?: boolean;
+  /** Strikethrough */
+  strikethrough?: boolean;
 } 

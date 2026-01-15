@@ -183,6 +183,12 @@ declare interface EventListenerRegistration {
 
 /**
  * ExcelBuilder class for creating Excel workbooks
+ *
+ * Main entry point for creating Excel files. Supports multiple worksheets, themes,
+ * predefined styles, and comprehensive Excel features.
+ *
+ * @class ExcelBuilder
+ * @implements {IExcelBuilder}
  */
 declare class ExcelBuilder implements IExcelBuilder {
     config: IExcelBuilderConfig;
@@ -191,62 +197,656 @@ declare class ExcelBuilder implements IExcelBuilder {
     isBuilding: boolean;
     stats: IBuildStats;
     private eventEmitter;
+    private cellStyles;
+    private theme;
+    /**
+     * Creates a new ExcelBuilder instance
+     *
+     * @param {IExcelBuilderConfig} config - Configuration options for the builder
+     * @param {IWorkbookMetadata} [config.metadata] - Workbook metadata (title, author, description, etc.)
+     * @param {Partial<IWorksheetConfig>} [config.defaultWorksheetConfig] - Default configuration for all worksheets
+     * @param {boolean} [config.enableValidation=true] - Enable data validation
+     * @param {boolean} [config.enableEvents=true] - Enable event system
+     * @param {boolean} [config.enablePerformanceMonitoring=false] - Enable performance monitoring
+     * @param {number} [config.maxWorksheets=255] - Maximum number of worksheets allowed
+     * @param {number} [config.maxRowsPerWorksheet=1048576] - Maximum rows per worksheet
+     * @param {number} [config.maxColumnsPerWorksheet=16384] - Maximum columns per worksheet
+     * @param {number} [config.memoryLimit=104857600] - Memory limit in bytes (100MB default)
+     *
+     * @example
+     * ```typescript
+     * const builder = new ExcelBuilder({
+     *   metadata: {
+     *     title: 'Annual Report',
+     *     author: 'John Doe',
+     *     description: 'Company annual report for 2024'
+     *   },
+     *   enableValidation: true,
+     *   enableEvents: true
+     * });
+     * ```
+     */
     constructor(config?: IExcelBuilderConfig);
     /**
      * Add a new worksheet to the workbook
+     *
+     * Creates a new worksheet with the specified name and configuration. The worksheet
+     * becomes the current worksheet automatically. If a worksheet with the same name
+     * already exists, an error is thrown.
+     *
+     * @param {string} name - Unique name for the worksheet (required, must be unique)
+     * @param {Partial<IWorksheetConfig>} [worksheetConfig={}] - Configuration for the worksheet
+     * @param {string} [worksheetConfig.tabColor] - Tab color (hex format, e.g., '#FF0000')
+     * @param {number} [worksheetConfig.defaultRowHeight=20] - Default row height in points
+     * @param {number} [worksheetConfig.defaultColWidth=10] - Default column width in characters
+     * @param {boolean} [worksheetConfig.hidden=false] - Whether the worksheet is hidden
+     * @param {boolean} [worksheetConfig.protected=false] - Whether the worksheet is protected
+     * @param {string} [worksheetConfig.protectionPassword] - Password for worksheet protection
+     * @param {boolean} [worksheetConfig.showGridLines=true] - Show grid lines
+     * @param {boolean} [worksheetConfig.showRowColHeaders=true] - Show row and column headers
+     * @param {number} [worksheetConfig.zoom] - Zoom level (10-400)
+     *
+     * @returns {IWorksheet} The newly created worksheet instance
+     *
+     * @throws {Error} If a worksheet with the same name already exists
+     *
+     * @example
+     * ```typescript
+     * // Simple worksheet
+     * const sheet1 = builder.addWorksheet('Sales');
+     *
+     * // Worksheet with configuration
+     * const sheet2 = builder.addWorksheet('Summary', {
+     *   tabColor: '#4472C4',
+     *   defaultRowHeight: 25,
+     *   defaultColWidth: 15,
+     *   protected: true,
+     *   protectionPassword: 'mypassword'
+     * });
+     * ```
      */
     addWorksheet(name: string, worksheetConfig?: Partial<IWorksheetConfig>): IWorksheet;
     /**
      * Get a worksheet by name
+     *
+     * Retrieves an existing worksheet from the workbook by its name.
+     * Returns undefined if the worksheet doesn't exist.
+     *
+     * @param {string} name - Name of the worksheet to retrieve
+     * @returns {IWorksheet | undefined} The worksheet if found, undefined otherwise
+     *
+     * @example
+     * ```typescript
+     * const worksheet = builder.getWorksheet('Sales');
+     * if (worksheet) {
+     *   worksheet.addRow([...]);
+     * }
+     * ```
      */
     getWorksheet(name: string): IWorksheet | undefined;
     /**
      * Remove a worksheet by name
+     *
+     * Removes a worksheet from the workbook. If the removed worksheet was the current
+     * worksheet, the current worksheet is cleared.
+     *
+     * @param {string} name - Name of the worksheet to remove
+     * @returns {boolean} True if the worksheet was found and removed, false otherwise
+     *
+     * @example
+     * ```typescript
+     * const removed = builder.removeWorksheet('OldSheet');
+     * if (removed) {
+     *   console.log('Worksheet removed successfully');
+     * }
+     * ```
      */
     removeWorksheet(name: string): boolean;
     /**
      * Set the current worksheet
+     *
+     * Sets the active worksheet. Operations like addRow() will be performed on the
+     * current worksheet. When you add a new worksheet, it automatically becomes the current one.
+     *
+     * @param {string} name - Name of the worksheet to set as current
+     * @returns {boolean} True if the worksheet was found and set, false otherwise
+     *
+     * @example
+     * ```typescript
+     * builder.addWorksheet('Sheet1');
+     * builder.addWorksheet('Sheet2');
+     *
+     * // Switch back to Sheet1
+     * builder.setCurrentWorksheet('Sheet1');
+     * ```
      */
     setCurrentWorksheet(name: string): boolean;
     /**
      * Build the workbook and return as ArrayBuffer
+     *
+     * Compiles all worksheets, applies themes and styles, and generates the Excel file
+     * as an ArrayBuffer. This is the core method that all export methods use internally.
+     *
+     * The build process:
+     * 1. Creates a new ExcelJS workbook
+     * 2. Applies workbook metadata
+     * 3. Applies theme (if set)
+     * 4. Adds predefined cell styles
+     * 5. Builds each worksheet
+     * 6. Writes to buffer with compression
+     *
+     * @param {IBuildOptions} [options={}] - Build options
+     * @param {'xlsx' | 'xls' | 'csv'} [options.format='xlsx'] - Output format
+     * @param {boolean} [options.includeStyles=true] - Include cell styles
+     * @param {number} [options.compressionLevel=6] - Compression level (0-9, higher = more compression)
+     * @param {boolean} [options.optimizeForSpeed=false] - Optimize for speed over file size
+     *
+     * @returns {Promise<Result<ArrayBuffer>>} Result containing the Excel file as ArrayBuffer
+     *
+     * @throws {Error} If build is already in progress (prevents concurrent builds)
+     *
+     * @example
+     * ```typescript
+     * // Basic build
+     * const result = await builder.build();
+     * if (result.success) {
+     *   const buffer = result.data;
+     *   // Use buffer...
+     * }
+     *
+     * // Build with options
+     * const result = await builder.build({
+     *   compressionLevel: 9, // Maximum compression
+     *   optimizeForSpeed: true
+     * });
+     * ```
      */
     build(options?: IBuildOptions): Promise<Result<ArrayBuffer>>;
     /**
-     * Generate and download the file
+     * Generate and download the file (Browser only)
+     *
+     * Builds the Excel file and automatically triggers a download in the user's browser.
+     * This is the simplest method for browser environments - just one method call!
+     *
+     * **Note**: This method is designed for browser environments. For Node.js, use `saveToFile()` instead.
+     *
+     * @param {string} fileName - Name of the file to download (e.g., 'report.xlsx')
+     * @param {IDownloadOptions} [options={}] - Download options
+     * @param {string} [options.mimeType] - MIME type (default: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+     * @param {number} [options.compressionLevel=6] - Compression level (0-9)
+     * @param {boolean} [options.includeStyles=true] - Include cell styles
+     *
+     * @returns {Promise<Result<void>>} Result indicating success or failure
+     *
+     * @example
+     * ```typescript
+     * // Simple download
+     * const result = await builder.generateAndDownload('sales-report.xlsx');
+     *
+     * if (result.success) {
+     *   console.log('File downloaded successfully!');
+     * } else {
+     *   console.error('Download failed:', result.error);
+     * }
+     *
+     * // With options
+     * await builder.generateAndDownload('report.xlsx', {
+     *   compressionLevel: 9,
+     *   mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+     * });
+     * ```
      */
     generateAndDownload(fileName: string, options?: IDownloadOptions): Promise<Result<void>>;
     /**
-     * Get workbook as buffer
+     * Save file to disk (Node.js only)
+     *
+     * Builds the Excel file and saves it directly to the file system. This is the Node.js
+     * equivalent of `generateAndDownload()` - just as simple! Automatically creates parent
+     * directories if they don't exist.
+     *
+     * **Note**: This method only works in Node.js environments. For browsers, use `generateAndDownload()`.
+     *
+     * @param {string} filePath - Full path where to save the file (e.g., './output/report.xlsx')
+     * @param {ISaveFileOptions} [options={}] - Save options
+     * @param {boolean} [options.createDir=true] - Create parent directories if they don't exist
+     * @param {string} [options.encoding='binary'] - File encoding ('binary', 'base64', etc.)
+     * @param {number} [options.compressionLevel=6] - Compression level (0-9)
+     * @param {boolean} [options.includeStyles=true] - Include cell styles
+     *
+     * @returns {Promise<Result<void>>} Result indicating success or failure
+     *
+     * @throws {Error} If called in browser environment (use `generateAndDownload()` instead)
+     * @throws {Error} If Node.js modules (fs, path, buffer) are not available
+     *
+     * @example
+     * ```typescript
+     * // Simple save - creates directories automatically
+     * const result = await builder.saveToFile('./output/report.xlsx');
+     *
+     * if (result.success) {
+     *   console.log('File saved successfully!');
+     * }
+     *
+     * // With options
+     * await builder.saveToFile('./reports/sales.xlsx', {
+     *   createDir: true,  // Create ./reports/ if it doesn't exist
+     *   encoding: 'binary',
+     *   compressionLevel: 9
+     * });
+     * ```
+     */
+    saveToFile(filePath: string, options?: ISaveFileOptions): Promise<Result<void>>;
+    /**
+     * Save to stream (Node.js only) - For large files
+     *
+     * Builds the Excel file and writes it directly to a writable stream. This is ideal
+     * for very large files or when you need to stream the data (e.g., HTTP responses,
+     * file uploads, etc.).
+     *
+     * **Note**: This method only works in Node.js environments.
+     *
+     * @param {NodeJS.WritableStream} writeStream - Writable stream to write the file to
+     * @param {IBuildOptions} [options={}] - Build options
+     * @param {number} [options.compressionLevel=6] - Compression level (0-9)
+     * @param {boolean} [options.includeStyles=true] - Include cell styles
+     *
+     * @returns {Promise<Result<void>>} Result indicating success or failure
+     *
+     * @throws {Error} If called in browser environment
+     *
+     * @example
+     * ```typescript
+     * import fs from 'fs';
+     *
+     * // Save to file stream
+     * const writeStream = fs.createWriteStream('./output/report.xlsx');
+     * const result = await builder.saveToStream(writeStream);
+     *
+     * if (result.success) {
+     *   writeStream.end();
+     *   console.log('File streamed successfully!');
+     * }
+     *
+     * // HTTP response stream
+     * app.get('/download', async (req, res) => {
+     *   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+     *   await builder.saveToStream(res);
+     * });
+     * ```
+     */
+    saveToStream(writeStream: {
+        write: (chunk: any, callback?: (error?: Error | null) => void) => boolean;
+    }, options?: IBuildOptions): Promise<Result<void>>;
+    /**
+     * Get workbook as ArrayBuffer
+     *
+     * Builds the Excel file and returns it as an ArrayBuffer. This is useful when you need
+     * the raw binary data for custom handling (e.g., sending via WebSocket, processing with
+     * other libraries, manual file operations, etc.).
+     *
+     * Works in both browser and Node.js environments.
+     *
+     * @param {IBuildOptions} [options={}] - Build options
+     * @param {number} [options.compressionLevel=6] - Compression level (0-9)
+     * @param {boolean} [options.includeStyles=true] - Include cell styles
+     *
+     * @returns {Promise<Result<ArrayBuffer>>} Result containing the Excel file as ArrayBuffer
+     *
+     * @example
+     * ```typescript
+     * // Browser: Get buffer for custom handling
+     * const result = await builder.toBuffer();
+     * if (result.success) {
+     *   const buffer = result.data;
+     *   // Upload to server, send via WebSocket, etc.
+     * }
+     *
+     * // Node.js: Get buffer for manual file write
+     * const result = await builder.toBuffer();
+     * if (result.success) {
+     *   const fs = await import('fs/promises');
+     *   await fs.writeFile('./report.xlsx', Buffer.from(result.data));
+     * }
+     * ```
      */
     toBuffer(options?: IBuildOptions): Promise<Result<ArrayBuffer>>;
     /**
-     * Get workbook as blob
+     * Get workbook as Blob
+     *
+     * Builds the Excel file and returns it as a Blob object. This is useful in browser
+     * environments when you need to upload to a server, create object URLs for preview,
+     * or handle the file programmatically without triggering an automatic download.
+     *
+     * **Note**: Blob is a browser API. In Node.js, use `toBuffer()` instead.
+     *
+     * @param {IBuildOptions} [options={}] - Build options
+     * @param {number} [options.compressionLevel=6] - Compression level (0-9)
+     * @param {boolean} [options.includeStyles=true] - Include cell styles
+     *
+     * @returns {Promise<Result<Blob>>} Result containing the Excel file as Blob
+     *
+     * @example
+     * ```typescript
+     * // Get as Blob for upload
+     * const result = await builder.toBlob();
+     * if (result.success) {
+     *   const blob = result.data;
+     *
+     *   // Upload to server
+     *   const formData = new FormData();
+     *   formData.append('file', blob, 'report.xlsx');
+     *   await fetch('/api/upload', { method: 'POST', body: formData });
+     *
+     *   // Or create preview URL
+     *   const url = URL.createObjectURL(blob);
+     *   window.open(url);
+     * }
+     * ```
      */
     toBlob(options?: IBuildOptions): Promise<Result<Blob>>;
     /**
      * Validate the workbook
+     *
+     * Performs validation checks on the workbook to ensure it's ready for building.
+     * Validates that worksheets exist and each worksheet is valid.
+     *
+     * @returns {Result<boolean>} Result indicating if the workbook is valid
+     * - `success: true` - Workbook is valid and ready to build
+     * - `success: false` - Validation errors found (check `error.message` for details)
+     *
+     * @example
+     * ```typescript
+     * const validation = builder.validate();
+     * if (!validation.success) {
+     *   console.error('Validation errors:', validation.error?.message);
+     *   return;
+     * }
+     *
+     * // Safe to build
+     * await builder.build();
+     * ```
      */
     validate(): Result<boolean>;
     /**
-     * Clear all worksheets
+     * Clear all worksheets and reset the builder
+     *
+     * Removes all worksheets, clears predefined cell styles, resets the theme,
+     * and clears the current worksheet. This effectively resets the builder to
+     * its initial state.
+     *
+     * @returns {void}
+     *
+     * @example
+     * ```typescript
+     * // Clear everything and start fresh
+     * builder.clear();
+     *
+     * // Now add new worksheets
+     * builder.addWorksheet('NewSheet');
+     * ```
      */
     clear(): void;
     /**
      * Get workbook statistics
+     *
+     * Returns build statistics including build time, file size, number of worksheets,
+     * cells, styles used, and performance metrics. Statistics are updated after each build.
+     *
+     * @returns {IBuildStats} Statistics object containing:
+     * - `totalWorksheets` - Number of worksheets
+     * - `totalCells` - Total number of cells
+     * - `memoryUsage` - Memory usage in bytes
+     * - `buildTime` - Last build time in milliseconds
+     * - `fileSize` - Last build file size in bytes
+     * - `stylesUsed` - Number of unique styles used
+     * - `formulasUsed` - Number of formulas
+     * - `conditionalFormatsUsed` - Number of conditional formats
+     * - `performance` - Performance breakdown by operation
+     *
+     * @example
+     * ```typescript
+     * await builder.build();
+     * const stats = builder.getStats();
+     *
+     * console.log(`Build time: ${stats.buildTime}ms`);
+     * console.log(`File size: ${stats.fileSize} bytes`);
+     * console.log(`Worksheets: ${stats.totalWorksheets}`);
+     * ```
      */
     getStats(): IBuildStats;
     /**
-     * Event handling methods
+     * Add a predefined cell style
+     *
+     * Defines a reusable cell style that can be referenced by name in cells using
+     * the `styleName` property. This is useful for maintaining consistent styling
+     * across the workbook and reducing code duplication.
+     *
+     * Styles are stored at the workbook level and can be used in any worksheet.
+     *
+     * @param {string} name - Unique name for the style (used to reference it later)
+     * @param {IStyle} style - Style object created with StyleBuilder
+     * @returns {this} Returns the builder instance for method chaining
+     *
+     * @example
+     * ```typescript
+     * // Define reusable styles
+     * builder.addCellStyle('headerStyle', StyleBuilder.create()
+     *   .font({ name: 'Arial', size: 14, bold: true })
+     *   .fill({ backgroundColor: '#4472C4' })
+     *   .fontColor('#FFFFFF')
+     *   .build()
+     * );
+     *
+     * // Use in cells
+     * worksheet.addHeader({
+     *   key: 'title',
+     *   value: 'Report',
+     *   type: CellType.STRING,
+     *   styleName: 'headerStyle' // Reference the predefined style
+     * });
+     * ```
+     */
+    addCellStyle(name: string, style: IStyle): this;
+    /**
+     * Get a predefined cell style by name
+     *
+     * Retrieves a previously defined cell style by its name. Returns undefined
+     * if the style doesn't exist.
+     *
+     * @param {string} name - Name of the style to retrieve
+     * @returns {IStyle | undefined} The style if found, undefined otherwise
+     *
+     * @example
+     * ```typescript
+     * const style = builder.getCellStyle('headerStyle');
+     * if (style) {
+     *   console.log('Style found:', style);
+     * }
+     * ```
+     */
+    getCellStyle(name: string): IStyle | undefined;
+    /**
+     * Set workbook theme
+     *
+     * Applies a color and font theme to the entire workbook. Themes affect all
+     * worksheets and can automatically apply styles to table sections (header, body, footer)
+     * if `autoApplySectionStyles` is enabled.
+     *
+     * Themes include:
+     * - Color palette (dark1, light1, dark2, light2, accent1-6, hyperlink colors)
+     * - Font families (major and minor fonts for latin, eastAsian, complexScript)
+     * - Optional section styles for automatic styling
+     *
+     * @param {IWorkbookTheme} theme - Theme configuration object
+     * @param {string} [theme.name] - Theme name
+     * @param {object} [theme.colors] - Color palette
+     * @param {object} [theme.fonts] - Font configuration
+     * @param {object} [theme.sectionStyles] - Styles for table sections
+     * @param {boolean} [theme.autoApplySectionStyles=true] - Auto-apply section styles
+     *
+     * @returns {this} Returns the builder instance for method chaining
+     *
+     * @example
+     * ```typescript
+     * builder.setTheme({
+     *   name: 'Corporate Theme',
+     *   colors: {
+     *     dark1: '#000000',
+     *     light1: '#FFFFFF',
+     *     accent1: '#4472C4',
+     *     accent2: '#ED7D31'
+     *   },
+     *   fonts: {
+     *     major: { latin: 'Calibri' },
+     *     minor: { latin: 'Calibri' }
+     *   },
+     *   autoApplySectionStyles: true
+     * });
+     * ```
+     */
+    setTheme(theme: IWorkbookTheme): this;
+    /**
+     * Get current workbook theme
+     *
+     * Retrieves the currently active theme, if one has been set.
+     *
+     * @returns {IWorkbookTheme | undefined} The current theme, or undefined if no theme is set
+     *
+     * @example
+     * ```typescript
+     * const theme = builder.getTheme();
+     * if (theme) {
+     *   console.log('Active theme:', theme.name);
+     * }
+     * ```
+     */
+    getTheme(): IWorkbookTheme | undefined;
+    /**
+     * Register an event listener
+     *
+     * Subscribes to builder events to monitor the build process. Returns a listener ID
+     * that can be used to remove the listener later.
+     *
+     * Available events:
+     * - `build:started` - Build process started
+     * - `build:completed` - Build completed successfully
+     * - `build:error` - Build failed with error
+     * - `download:started` - File download/save started
+     * - `download:completed` - File download/save completed
+     * - `download:error` - File download/save failed
+     * - `worksheet:added` - New worksheet added
+     * - `worksheet:removed` - Worksheet removed
+     *
+     * @param {BuilderEventType} eventType - Type of event to listen for
+     * @param {(event: IBuilderEvent) => void} listener - Callback function to execute when event fires
+     * @returns {string} Listener ID (use with `off()` to remove the listener)
+     *
+     * @example
+     * ```typescript
+     * const listenerId = builder.on('build:started', (event) => {
+     *   console.log('Build started at', event.timestamp);
+     * });
+     *
+     * builder.on('build:completed', (event) => {
+     *   console.log('Build completed:', event.data);
+     * });
+     *
+     * builder.on('build:error', (event) => {
+     *   console.error('Build error:', event.data.error);
+     * });
+     * ```
      */
     on(eventType: BuilderEventType, listener: (event: IBuilderEvent) => void): string;
+    /**
+     * Remove an event listener
+     *
+     * Unsubscribes from a specific event by removing the listener with the given ID.
+     *
+     * @param {BuilderEventType} eventType - Type of event
+     * @param {string} listenerId - Listener ID returned from `on()`
+     * @returns {boolean} True if the listener was found and removed, false otherwise
+     *
+     * @example
+     * ```typescript
+     * const listenerId = builder.on('build:started', handler);
+     *
+     * // Later, remove the listener
+     * builder.off('build:started', listenerId);
+     * ```
+     */
     off(eventType: BuilderEventType, listenerId: string): boolean;
+    /**
+     * Remove all event listeners
+     *
+     * Removes all listeners for a specific event type, or all listeners for all events
+     * if no event type is specified.
+     *
+     * @param {BuilderEventType} [eventType] - Event type to clear listeners for. If omitted, clears all listeners
+     * @returns {void}
+     *
+     * @example
+     * ```typescript
+     * // Remove all listeners for 'build:started' event
+     * builder.removeAllListeners('build:started');
+     *
+     * // Remove all listeners for all events
+     * builder.removeAllListeners();
+     * ```
+     */
     removeAllListeners(eventType?: BuilderEventType): void;
     /**
      * Private methods
      */
+    /**
+     * Emit an event to all registered listeners
+     * @private
+     */
     private emitEvent;
+    /**
+     * Initialize build statistics
+     * @private
+     */
     private initializeStats;
+    /**
+     * Apply theme to workbook
+     *
+     * Internal method that applies the theme configuration to the ExcelJS workbook.
+     * Converts theme colors and fonts to ExcelJS format.
+     *
+     * @private
+     * @param {ExcelJS.Workbook} workbook - ExcelJS workbook instance
+     * @param {IWorkbookTheme} theme - Theme configuration
+     */
+    private applyTheme;
+    /**
+     * Convert color to theme format
+     *
+     * Converts a Color value (hex string, RGB object, or theme color) to the format
+     * expected by ExcelJS themes (hex string without #).
+     *
+     * @private
+     * @param {Color} color - Color to convert
+     * @returns {string} Hex color string without # prefix
+     */
+    private convertColorToTheme;
+    /**
+     * Add style to workbook
+     *
+     * Stores a predefined style in the workbook so it can be accessed during worksheet
+     * building. ExcelJS doesn't support named styles directly, so we store them in a custom
+     * property that worksheets can access when building cells.
+     *
+     * @private
+     * @param {ExcelJS.Workbook} workbook - ExcelJS workbook instance
+     * @param {string} name - Style name
+     * @param {IStyle} style - Style object
+     *
+     * @remarks
+     * ExcelJS applies styles per cell, not as named styles. This method stores styles
+     * in a way that worksheets can retrieve them when building cells that reference
+     * the style by name.
+     */
+    private addStyleToWorkbook;
 }
 export { ExcelBuilder }
 export default ExcelBuilder;
@@ -410,6 +1010,8 @@ export declare interface IBaseCell {
     validation?: IDataValidation;
     /** Optional styles for the cell */
     styles?: IStyle;
+    /** Predefined style name (references a style added via addCellStyle) */
+    styleName?: string;
     /** Legacy children cells */
     childrens?: IBaseCell[];
     /** Modern children cells */
@@ -697,6 +1299,36 @@ export declare interface IDataCell extends IBaseCell {
 }
 
 /**
+ * Data connection configuration
+ */
+export declare interface IDataConnection {
+    /** Connection name */
+    name: string;
+    /** Connection type */
+    type: 'odbc' | 'oledb' | 'web' | 'text' | 'xml';
+    /** Connection string or URL */
+    connectionString: string;
+    /** Command text (SQL query, etc.) */
+    commandText?: string;
+    /** Refresh settings */
+    refresh?: {
+        /** Auto refresh on open */
+        refreshOnOpen?: boolean;
+        /** Refresh interval in minutes */
+        refreshInterval?: number;
+    };
+    /** Credentials */
+    credentials?: {
+        /** Username */
+        username?: string;
+        /** Password */
+        password?: string;
+        /** Integrated security */
+        integratedSecurity?: boolean;
+    };
+}
+
+/**
  * Data validation interface
  */
 export declare interface IDataValidation {
@@ -744,6 +1376,8 @@ declare interface IDetailedCell {
     formattedValue?: string;
     /** Formula (if includeFormulas is true) */
     formula?: string;
+    /** Cell comment */
+    comment?: string;
 }
 
 /**
@@ -836,6 +1470,12 @@ export declare interface IExcelBuilder {
     build(options?: IBuildOptions): Promise<Result<ArrayBuffer>>;
     /** Generate and download the file */
     generateAndDownload(fileName: string, options?: IDownloadOptions): Promise<Result<void>>;
+    /** Save file to disk (Node.js only) - Similar to generateAndDownload but for Node.js */
+    saveToFile(filePath: string, options?: ISaveFileOptions): Promise<Result<void>>;
+    /** Save to stream (Node.js only) - For large files */
+    saveToStream(writeStream: {
+        write: (chunk: any, callback?: (error?: Error | null) => void) => boolean;
+    }, options?: IBuildOptions): Promise<Result<void>>;
     /** Get workbook as buffer */
     toBuffer(options?: IBuildOptions): Promise<Result<ArrayBuffer>>;
     /** Get workbook as blob */
@@ -846,6 +1486,14 @@ export declare interface IExcelBuilder {
     clear(): void;
     /** Get workbook statistics */
     getStats(): IBuildStats;
+    /** Add a predefined cell style */
+    addCellStyle(name: string, style: IStyle): this;
+    /** Get a predefined cell style by name */
+    getCellStyle(name: string): IStyle | undefined;
+    /** Set workbook theme */
+    setTheme(theme: IWorkbookTheme): this;
+    /** Get current workbook theme */
+    getTheme(): IWorkbookTheme | undefined;
 }
 
 /**
@@ -912,6 +1560,38 @@ declare interface IExcelReaderOptions {
     dateFormat?: string;
     /** Whether to convert dates to ISO strings */
     datesAsISO?: boolean;
+}
+
+/**
+ * Excel structured table configuration
+ */
+export declare interface IExcelTable {
+    /** Table name */
+    name: string;
+    /** Table range (start and end cells) */
+    range: {
+        /** Start cell reference (e.g., 'A1') */
+        start: string;
+        /** End cell reference (e.g., 'D10') */
+        end: string;
+    };
+    /** Table style */
+    style?: 'TableStyleLight1' | 'TableStyleLight2' | 'TableStyleLight3' | 'TableStyleLight4' | 'TableStyleLight5' | 'TableStyleLight6' | 'TableStyleLight7' | 'TableStyleLight8' | 'TableStyleLight9' | 'TableStyleLight10' | 'TableStyleLight11' | 'TableStyleLight12' | 'TableStyleLight13' | 'TableStyleLight14' | 'TableStyleLight15' | 'TableStyleLight16' | 'TableStyleLight17' | 'TableStyleLight18' | 'TableStyleLight19' | 'TableStyleLight20' | 'TableStyleLight21' | 'TableStyleMedium1' | 'TableStyleMedium2' | 'TableStyleMedium3' | 'TableStyleMedium4' | 'TableStyleMedium5' | 'TableStyleMedium6' | 'TableStyleMedium7' | 'TableStyleMedium8' | 'TableStyleMedium9' | 'TableStyleMedium10' | 'TableStyleMedium11' | 'TableStyleMedium12' | 'TableStyleMedium13' | 'TableStyleMedium14' | 'TableStyleMedium15' | 'TableStyleMedium16' | 'TableStyleMedium17' | 'TableStyleMedium18' | 'TableStyleMedium19' | 'TableStyleMedium20' | 'TableStyleMedium21' | 'TableStyleMedium22' | 'TableStyleMedium23' | 'TableStyleMedium24' | 'TableStyleMedium25' | 'TableStyleMedium26' | 'TableStyleMedium27' | 'TableStyleMedium28' | 'TableStyleDark1' | 'TableStyleDark2' | 'TableStyleDark3' | 'TableStyleDark4' | 'TableStyleDark5' | 'TableStyleDark6' | 'TableStyleDark7' | 'TableStyleDark8' | 'TableStyleDark9' | 'TableStyleDark10' | 'TableStyleDark11';
+    /** Whether to show header row */
+    headerRow?: boolean;
+    /** Whether to show total row */
+    totalRow?: boolean;
+    /** Column definitions */
+    columns?: Array<{
+        /** Column name */
+        name: string;
+        /** Column filter button */
+        filterButton?: boolean;
+        /** Totals row function */
+        totalsRowFunction?: 'none' | 'sum' | 'min' | 'max' | 'average' | 'count' | 'countNums' | 'stdDev' | 'var' | 'custom';
+        /** Totals row formula */
+        totalsRowFormula?: string;
+    }>;
 }
 
 /**
@@ -1050,6 +1730,8 @@ declare interface IJsonCell {
     formattedValue?: string;
     /** Formula (if includeFormulas is true) */
     formula?: string;
+    /** Cell comment */
+    comment?: string;
 }
 
 /**
@@ -1116,6 +1798,43 @@ export declare interface ILengthValidation {
 }
 
 /**
+ * Pivot table configuration
+ */
+export declare interface IPivotTable {
+    /** Pivot table name */
+    name: string;
+    /** Reference cell where pivot table starts (e.g., 'A1') */
+    ref: string;
+    /** Source data range (e.g., 'A1:D100') */
+    sourceRange: string;
+    /** Source worksheet name (if different from current) */
+    sourceSheet?: string;
+    /** Pivot table fields configuration */
+    fields: {
+        /** Rows fields */
+        rows?: string[];
+        /** Columns fields */
+        columns?: string[];
+        /** Values fields with aggregation function */
+        values?: Array<{
+            name: string;
+            stat: 'sum' | 'count' | 'average' | 'min' | 'max' | 'stdDev' | 'var';
+        }>;
+        /** Filters fields */
+        filters?: string[];
+    };
+    /** Pivot table options */
+    options?: {
+        /** Show grand totals for rows */
+        showRowGrandTotals?: boolean;
+        /** Show grand totals for columns */
+        showColGrandTotals?: boolean;
+        /** Show headers */
+        showHeaders?: boolean;
+    };
+}
+
+/**
  * Protection configuration interface
  */
 export declare interface IProtection {
@@ -1151,6 +1870,77 @@ export declare interface IReferenceValidation {
     required?: boolean;
     /** Reference validation function */
     validateReference?: (reference: string) => boolean;
+}
+
+/**
+ * Rich text run interface (for formatted text within a cell)
+ */
+export declare interface IRichTextRun {
+    /** Text content */
+    text: string;
+    /** Font name */
+    font?: string;
+    /** Font size */
+    size?: number;
+    /** Font color */
+    color?: string | {
+        r: number;
+        g: number;
+        b: number;
+    } | {
+        theme: number;
+    };
+    /** Bold */
+    bold?: boolean;
+    /** Italic */
+    italic?: boolean;
+    /** Underline */
+    underline?: boolean;
+    /** Strikethrough */
+    strikethrough?: boolean;
+}
+
+/**
+ * Save file options interface (for Node.js)
+ */
+export declare interface ISaveFileOptions extends IBuildOptions {
+    /** Whether to create parent directories if they don't exist (default: true) */
+    createDir?: boolean;
+    /** File encoding (default: 'binary') */
+    encoding?: 'ascii' | 'utf8' | 'utf-8' | 'utf16le' | 'ucs2' | 'ucs-2' | 'base64' | 'latin1' | 'binary' | 'hex';
+}
+
+/**
+ * Slicer configuration for tables and pivot tables
+ */
+export declare interface ISlicer {
+    /** Slicer name */
+    name: string;
+    /** Target table or pivot table name */
+    targetTable: string;
+    /** Column/field to create slicer for */
+    column: string;
+    /** Position where slicer should be placed */
+    position: {
+        /** Row number (1-based) */
+        row: number;
+        /** Column number or letter (1-based or 'A', 'B', etc.) */
+        col: number | string;
+    };
+    /** Slicer size */
+    size?: {
+        /** Width in pixels */
+        width?: number;
+        /** Height in pixels */
+        height?: number;
+    };
+    /** Slicer style */
+    style?: {
+        /** Caption style */
+        caption?: string;
+        /** Item style */
+        itemStyle?: string;
+    };
 }
 
 /**
@@ -1286,6 +2076,8 @@ export declare interface ITable {
     showStripes?: boolean;
     /** Table style */
     style?: 'TableStyleLight1' | 'TableStyleLight2' | 'TableStyleMedium1' | 'TableStyleMedium2' | 'TableStyleDark1' | 'TableStyleDark2';
+    /** Auto filter for this table */
+    autoFilter?: boolean;
 }
 
 /**
@@ -1433,6 +2225,31 @@ export declare interface IValidationStats {
 }
 
 /**
+ * Watermark configuration
+ */
+export declare interface IWatermark {
+    /** Watermark text */
+    text?: string;
+    /** Watermark image (alternative to text) */
+    image?: IWorksheetImage;
+    /** Position */
+    position?: {
+        /** Horizontal position: 'left' | 'center' | 'right' */
+        horizontal?: 'left' | 'center' | 'right';
+        /** Vertical position: 'top' | 'middle' | 'bottom' */
+        vertical?: 'top' | 'middle' | 'bottom';
+    };
+    /** Opacity (0-1) */
+    opacity?: number;
+    /** Rotation in degrees */
+    rotation?: number;
+    /** Font size (if using text) */
+    fontSize?: number;
+    /** Font color (if using text) */
+    fontColor?: string;
+}
+
+/**
  * Workbook metadata interface
  */
 export declare interface IWorkbookMetadata {
@@ -1465,6 +2282,93 @@ export declare interface IWorkbookMetadata {
 }
 
 /**
+ * Workbook theme configuration
+ */
+export declare interface IWorkbookTheme {
+    /** Theme name */
+    name?: string;
+    /** Color scheme */
+    colors?: {
+        /** Dark 1 color */
+        dark1?: Color;
+        /** Light 1 color */
+        light1?: Color;
+        /** Dark 2 color */
+        dark2?: Color;
+        /** Light 2 color */
+        light2?: Color;
+        /** Accent 1 color */
+        accent1?: Color;
+        /** Accent 2 color */
+        accent2?: Color;
+        /** Accent 3 color */
+        accent3?: Color;
+        /** Accent 4 color */
+        accent4?: Color;
+        /** Accent 5 color */
+        accent5?: Color;
+        /** Accent 6 color */
+        accent6?: Color;
+        /** Hyperlink color */
+        hyperlink?: Color;
+        /** Followed hyperlink color */
+        followedHyperlink?: Color;
+    };
+    /** Font scheme */
+    fonts?: {
+        /** Major font (headings) */
+        major?: {
+            latin?: string;
+            eastAsian?: string;
+            complexScript?: string;
+        };
+        /** Minor font (body) */
+        minor?: {
+            latin?: string;
+            eastAsian?: string;
+            complexScript?: string;
+        };
+    };
+    /** Section styles - automatically applied to headers, footers, body, etc. */
+    sectionStyles?: {
+        /** Style for main headers */
+        header?: {
+            backgroundColor?: Color;
+            fontColor?: Color;
+            fontSize?: number;
+            fontBold?: boolean;
+            borderColor?: Color;
+        };
+        /** Style for subheaders */
+        subHeader?: {
+            backgroundColor?: Color;
+            fontColor?: Color;
+            fontSize?: number;
+            fontBold?: boolean;
+            borderColor?: Color;
+        };
+        /** Style for body/data rows */
+        body?: {
+            backgroundColor?: Color;
+            fontColor?: Color;
+            fontSize?: number;
+            alternatingRowColor?: Color;
+            borderColor?: Color;
+        };
+        /** Style for footers */
+        footer?: {
+            backgroundColor?: Color;
+            fontColor?: Color;
+            fontSize?: number;
+            fontBold?: boolean;
+            borderColor?: Color;
+        };
+    };
+    /** Whether to automatically apply section styles (default: true) */
+    autoApplySectionStyles?: boolean;
+}
+
+/**
  * Worksheet interface
  */
 export declare interface IWorksheet {
@@ -1494,6 +2398,32 @@ export declare interface IWorksheet {
     finalizeTable(): this;
     /** Get a table by name */
     getTable(name: string): ITable | undefined;
+    /** Add an image to the worksheet */
+    addImage(image: IWorksheetImage): this;
+    /** Group rows (create collapsible outline) */
+    groupRows(startRow: number, endRow: number, collapsed?: boolean): this;
+    /** Group columns (create collapsible outline) */
+    groupColumns(startCol: number, endCol: number, collapsed?: boolean): this;
+    /** Add a named range */
+    addNamedRange(name: string, range: string | ICellRange, scope?: string): this;
+    /** Add an Excel structured table */
+    addExcelTable(table: IExcelTable): this;
+    /** Hide rows */
+    hideRows(rows: number | number[]): this;
+    /** Show rows */
+    showRows(rows: number | number[]): this;
+    /** Hide columns */
+    hideColumns(columns: number | string | (number | string)[]): this;
+    /** Show columns */
+    showColumns(columns: number | string | (number | string)[]): this;
+    /** Add a pivot table */
+    addPivotTable(pivotTable: IPivotTable): this;
+    /** Add a slicer to a table or pivot table */
+    addSlicer(slicer: ISlicer): this;
+    /** Add a watermark to the worksheet */
+    addWatermark(watermark: IWatermark): this;
+    /** Add a data connection */
+    addDataConnection(connection: IDataConnection): this;
     /** Build the worksheet */
     build(workbook: any, options?: any): Promise<void>;
     /** Validate the worksheet */
@@ -1552,6 +2482,71 @@ export declare interface IWorksheetConfig {
             footer?: number;
         };
     };
+    /** Auto filter configuration */
+    autoFilter?: {
+        /** Enable auto filter for the worksheet */
+        enabled?: boolean;
+        /** Auto filter range (if not specified, applies to all data) */
+        range?: ICellRange;
+        /** Start row for auto filter (1-based, default: first data row) */
+        startRow?: number;
+        /** End row for auto filter (1-based, default: last data row) */
+        endRow?: number;
+        /** Start column for auto filter (1-based, default: 1) */
+        startColumn?: number;
+        /** End column for auto filter (1-based, default: last column) */
+        endColumn?: number;
+    };
+    /** Print headers/footers configuration */
+    printHeadersFooters?: {
+        /** Header text (left, center, right) */
+        header?: {
+            left?: string;
+            center?: string;
+            right?: string;
+        };
+        /** Footer text (left, center, right) */
+        footer?: {
+            left?: string;
+            center?: string;
+            right?: string;
+        };
+    };
+    /** Repeat rows/columns on each printed page */
+    printRepeat?: {
+        /** Rows to repeat (e.g., "1:2" or [1, 2]) */
+        rows?: string | number[];
+        /** Columns to repeat (e.g., "A:B" or [1, 2]) */
+        columns?: string | number[];
+    };
+    /** Split panes configuration (divides window into panes) */
+    splitPanes?: {
+        /** Horizontal split position (column number, 0 = no split) */
+        xSplit?: number;
+        /** Vertical split position (row number, 0 = no split) */
+        ySplit?: number;
+        /** Top-left cell in bottom-right pane */
+        topLeftCell?: string;
+        /** Active pane (topLeft, topRight, bottomLeft, bottomRight) */
+        activePane?: 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight';
+    };
+    /** Sheet views configuration */
+    views?: {
+        /** View state (normal, pageBreakPreview, pageLayout) */
+        state?: 'normal' | 'pageBreakPreview' | 'pageLayout';
+        /** Zoom level (10-400) */
+        zoomScale?: number;
+        /** Normal zoom level */
+        zoomScaleNormal?: number;
+        /** Show grid lines */
+        showGridLines?: boolean;
+        /** Show row and column headers */
+        showRowColHeaders?: boolean;
+        /** Show ruler (page layout view) */
+        showRuler?: boolean;
+        /** Right-to-left */
+        rightToLeft?: boolean;
+    };
 }
 
 /**
@@ -1562,6 +2557,40 @@ export declare interface IWorksheetEvent {
     worksheet: IWorksheet;
     data?: Record<string, unknown>;
     timestamp: Date;
+}
+
+/**
+ * Image configuration for worksheet
+ */
+export declare interface IWorksheetImage {
+    /** Image buffer (ArrayBuffer, Uint8Array, or base64 string) */
+    buffer: ArrayBuffer | Uint8Array | string;
+    /** Image name/ID */
+    name?: string;
+    /** Image extension (png, jpeg, gif, etc.) */
+    extension: 'png' | 'jpeg' | 'jpg' | 'gif' | 'bmp' | 'webp';
+    /** Position - can be cell reference or absolute position */
+    position: {
+        /** Cell reference (e.g., 'A1') or row number (1-based) */
+        row: string | number;
+        /** Column letter (e.g., 'A') or column number (1-based) */
+        col: string | number;
+    };
+    /** Image size */
+    size?: {
+        /** Width in pixels or Excel units */
+        width?: number;
+        /** Height in pixels or Excel units */
+        height?: number;
+        /** Scale factor (0-1) */
+        scaleX?: number;
+        /** Scale factor (0-1) */
+        scaleY?: number;
+    };
+    /** Hyperlink for image (optional) */
+    hyperlink?: string;
+    /** Image description/alt text */
+    description?: string;
 }
 
 /**
@@ -1787,6 +2816,19 @@ export declare class Worksheet implements IWorksheet {
     private subHeaders;
     private body;
     private footers;
+    private images;
+    private rowGroups;
+    private columnGroups;
+    private namedRanges;
+    private excelTables;
+    private hiddenRows;
+    private hiddenColumns;
+    private pivotTables;
+    private slicers;
+    private watermarks;
+    private dataConnections;
+    private customStyles?;
+    private theme?;
     constructor(config: IWorksheetConfig);
     /**
      * Agrega un header principal
@@ -1816,6 +2858,58 @@ export declare class Worksheet implements IWorksheet {
      * Obtiene una tabla por nombre
      */
     getTable(name: string): ITable | undefined;
+    /**
+     * Agrega una imagen al worksheet
+     */
+    addImage(image: IWorksheetImage): this;
+    /**
+     * Agrupa filas (crea esquema colapsable)
+     */
+    groupRows(startRow: number, endRow: number, collapsed?: boolean): this;
+    /**
+     * Agrupa columnas (crea esquema colapsable)
+     */
+    groupColumns(startCol: number, endCol: number, collapsed?: boolean): this;
+    /**
+     * Agrega un rango con nombre
+     */
+    addNamedRange(name: string, range: string | ICellRange, scope?: string): this;
+    /**
+     * Agrega una tabla estructurada de Excel
+     */
+    addExcelTable(table: IExcelTable): this;
+    /**
+     * Oculta filas
+     */
+    hideRows(rows: number | number[]): this;
+    /**
+     * Muestra filas
+     */
+    showRows(rows: number | number[]): this;
+    /**
+     * Oculta columnas
+     */
+    hideColumns(columns: number | string | (number | string)[]): this;
+    /**
+     * Muestra columnas
+     */
+    showColumns(columns: number | string | (number | string)[]): this;
+    /**
+     * Agrega una tabla dinámica (pivot table)
+     */
+    addPivotTable(pivotTable: IPivotTable): this;
+    /**
+     * Agrega un slicer a una tabla o tabla dinámica
+     */
+    addSlicer(slicer: ISlicer): this;
+    /**
+     * Agrega una marca de agua al worksheet
+     */
+    addWatermark(watermark: IWatermark): this;
+    /**
+     * Agrega una conexión de datos
+     */
+    addDataConnection(connection: IDataConnection): this;
     /**
      * Construye la hoja en el workbook de ExcelJS
      */
@@ -1890,6 +2984,26 @@ export declare class Worksheet implements IWorksheet {
      */
     private applyCellDimensions;
     /**
+     * Aplica comentario a una celda
+     */
+    private applyCellComment;
+    /**
+     * Aplica validación de datos a una celda
+     */
+    private applyDataValidation;
+    /**
+     * Aplica formato condicional a una celda
+     */
+    private applyConditionalFormatting;
+    /**
+     * Aplica filtro automático a una tabla
+     */
+    private applyAutoFilter;
+    /**
+     * Aplica filtro automático a nivel de worksheet
+     */
+    private applyWorksheetAutoFilter;
+    /**
      * Procesa el valor de una celda considerando links y máscaras
      * Si el tipo es LINK o hay un link, crea un hipervínculo en Excel
      */
@@ -1907,6 +3021,70 @@ export declare class Worksheet implements IWorksheet {
      * Convierte el estilo personalizado a formato compatible con ExcelJS
      */
     private convertStyle;
+    /**
+     * Convierte un número de columna a letra (1 = A, 2 = B, etc.)
+     */
+    private numberToColumnLetter;
+    /**
+     * Convierte letra de columna a número (A = 1, B = 2, etc.)
+     */
+    private columnLetterToNumber;
+    /**
+     * Aplica una imagen al worksheet
+     */
+    private applyImage;
+    /**
+     * Aplica agrupación de filas
+     */
+    private applyRowGrouping;
+    /**
+     * Aplica agrupación de columnas
+     */
+    private applyColumnGrouping;
+    /**
+     * Aplica una tabla estructurada de Excel
+     */
+    private applyExcelTable;
+    /**
+     * Aplica configuración avanzada de impresión
+     */
+    private applyAdvancedPrintSettings;
+    /**
+     * Aplica filas y columnas ocultas
+     */
+    private applyHiddenRowsColumns;
+    /**
+     * Aplica una tabla dinámica (pivot table)
+     */
+    private applyPivotTable;
+    /**
+     * Convierte un color a formato ExcelJS
+     */
+    private convertColorToExcelJS;
+    /**
+     * Aplica views (freeze panes, split panes, sheet views)
+     */
+    private applyViews;
+    /**
+     * Obtiene un estilo predefinido del workbook
+     */
+    private getPredefinedStyle;
+    /**
+     * Obtiene un estilo del tema para una sección específica
+     */
+    private getThemeStyle;
+    /**
+     * Aplica un slicer a una tabla o tabla dinámica
+     */
+    private applySlicer;
+    /**
+     * Aplica una marca de agua al worksheet
+     */
+    private applyWatermark;
+    /**
+     * Aplica una conexión de datos
+     */
+    private applyDataConnection;
 }
 
 /**

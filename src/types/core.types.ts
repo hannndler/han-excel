@@ -135,6 +135,8 @@ export interface IBaseCell {
   validation?: IDataValidation;
   /** Optional styles for the cell */
   styles?: import('./style.types').IStyle;
+  /** Predefined style name (references a style added via addCellStyle) */
+  styleName?: string;
   /** Legacy children cells */
   childrens?: IBaseCell[];
   /** Modern children cells */
